@@ -1,0 +1,25 @@
+{
+  "name": "piano-buddy",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "test": "vitest run",
+    "build": "vue-tsc --noEmit && vite build"
+  },
+  "dependencies": {
+    "idb": "^8.0.2",
+    "vexflow": "^4.2.5",
+    "vue": "^3.5.13"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "@vitejs/plugin-vue": "^5.2.1",
+    "@vue/test-utils": "^2.4.6",
+    "happy-dom": "^16.7.1",
+    "typescript": "^5.7.2",
+    "vite": "^6.0.6",
+    "vitest": "^3.0.5",
+    "vue-tsc": "^2.2.0"
+  }
+}

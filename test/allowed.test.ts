@@ -89,4 +89,39 @@ describe("isAllowed", () => {
     ];
     expect(isAllowed(second)).toBe(false);
   });
+
+  it("rejects an L3 fourth and accepts a fifth", () => {
+    const fourth = l1();
+    fourth.level = 3;
+    fourth.staves.RH!.measures[0].notes[0].pitches = [
+      { step: "C", octave: 4, alteration: 0 },
+      { step: "F", octave: 4, alteration: 0 },
+    ];
+    expect(isAllowed(fourth)).toBe(false);
+
+    const fifth = l1();
+    fifth.level = 3;
+    fifth.staves.RH!.measures[0].notes[0].pitches = [
+      { step: "C", octave: 4, alteration: 0 },
+      { step: "G", octave: 4, alteration: 0 },
+    ];
+    expect(isAllowed(fifth)).toBe(true);
+
+    const repeated = l1();
+    repeated.level = 3;
+    repeated.staves.RH!.measures[0].notes[0].pitches = [
+      { step: "C", octave: 4, alteration: 0 },
+      { step: "E", octave: 4, alteration: 0 },
+      { step: "E", octave: 4, alteration: 0 },
+    ];
+    expect(isAllowed(repeated)).toBe(false);
+  });
+
+  it("allows the left-hand neighbor above Bb at L4", () => {
+    const score = l1("LH");
+    score.level = 4;
+    score.keySignature = "Bb";
+    score.staves.LH!.measures[0].notes[0].pitches = [{ step: "G", octave: 4, alteration: 0 }];
+    expect(isAllowed(score)).toBe(true);
+  });
 });

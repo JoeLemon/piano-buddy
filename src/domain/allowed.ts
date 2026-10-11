@@ -64,7 +64,7 @@ function soundingNoteOk(
   if (note.pitches.length > 1 && !chordOk(note.pitches, hand, key, spec)) return false;
   for (const pitch of note.pitches) {
     if (!alterationOk(pitch, key, spec)) return false;
-    if (ledgerLines(clef, pitch) > spec.maxLedgerLines) return false;
+    if (ledgerCapApplies(spec) && ledgerLines(clef, pitch) > spec.maxLedgerLines) return false;
     if (!pitchInVocabulary(pitch, hand, clef, key, spec)) return false;
   }
   if (spec.maxLeap !== null && previous && leapSemitones(previous, note.pitches) > spec.maxLeap) return false;
@@ -73,12 +73,24 @@ function soundingNoteOk(
 
 function chordOk(pitches: Pitch[], hand: Hand, key: KeySignature, spec: LevelSpec): boolean {
   if (pitches.length < 2 || pitches.length > 3) return false;
-  const steps = new Set(pitches.map((pitch) => pitch.step));
-  const triad = TRIADS.some((chord) => [...steps].every((step) => chord.includes(step)));
-  if (!triad) return false;
+  if (!triadShapeOk(pitches)) return false;
   return spec.positions.some((position) =>
     pitches.every((pitch) => pitchesFor(position, hand).some((slot) => slotAccepts(pitch, slot, key, spec))),
   );
+}
+
+function triadShapeOk(pitches: Pitch[]): boolean {
+  const steps = new Set(pitches.map((pitch) => pitch.step));
+  if (pitches.length === 3) {
+    return TRIADS.some((chord) => chord.length === steps.size && chord.every((step) => steps.has(step)));
+  }
+  const interval = Math.abs(pitchToMidi(pitches[0]) - pitchToMidi(pitches[1]));
+  if (interval !== 3 && interval !== 4 && interval !== 7) return false;
+  return TRIADS.some((chord) => [...steps].every((step) => chord.includes(step)));
+}
+
+function ledgerCapApplies(spec: LevelSpec): boolean {
+  return spec.ledgerWindow || !spec.expandEnds;
 }
 
 function alterationOk(pitch: Pitch, key: KeySignature, spec: LevelSpec): boolean {

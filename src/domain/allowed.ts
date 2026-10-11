@@ -72,8 +72,9 @@ function soundingNoteOk(
 }
 
 function chordOk(pitches: Pitch[], hand: Hand, key: KeySignature, spec: LevelSpec): boolean {
+  if (pitches.length < 2 || pitches.length > 3) return false;
   const steps = new Set(pitches.map((pitch) => pitch.step));
-  const triad = TRIADS.some((chord) => chord.length === steps.size && chord.every((step) => steps.has(step)));
+  const triad = TRIADS.some((chord) => [...steps].every((step) => chord.includes(step)));
   if (!triad) return false;
   return spec.positions.some((position) =>
     pitches.every((pitch) => pitchesFor(position, hand).some((slot) => slotAccepts(pitch, slot, key, spec))),

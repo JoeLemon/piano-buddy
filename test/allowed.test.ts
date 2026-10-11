@@ -71,4 +71,22 @@ describe("isAllowed", () => {
     score.level = 1;
     expect(isAllowed(score)).toBe(false);
   });
+
+  it("accepts an L3 third and rejects a second", () => {
+    const third = l1();
+    third.level = 3;
+    third.staves.RH!.measures[0].notes[0].pitches = [
+      { step: "C", octave: 4, alteration: 0 },
+      { step: "E", octave: 4, alteration: 0 },
+    ];
+    expect(isAllowed(third)).toBe(true);
+
+    const second = l1();
+    second.level = 3;
+    second.staves.RH!.measures[0].notes[0].pitches = [
+      { step: "C", octave: 4, alteration: 0 },
+      { step: "D", octave: 4, alteration: 0 },
+    ];
+    expect(isAllowed(second)).toBe(false);
+  });
 });

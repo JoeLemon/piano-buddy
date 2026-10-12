@@ -32,20 +32,29 @@ export async function subscribeMidi(onNote: (note: MidiNote) => void): Promise<(
     }
   };
 
-  const attach = (input: MIDIInput) => {
-    if (listened.has(input)) return;
-    if (input.connection !== "open") void input.open().catch(() => {});
-    input.addEventListener("midimessage", onMessage);
-    listened.add(input);
+  const attach = async (input: MIDIInput) => {
+    if (!listened.has(input)) {
+      input.addEventListener("midimessage", onMessage);
+      listened.add(input);
+    }
+    if (input.connection !== "open") await input.open();
   };
 
+  const opening: Promise<void>[] = [];
   access.inputs.forEach((input) => {
-    attach(input);
+    opening.push(attach(input));
   });
+  try {
+    await Promise.all(opening);
+  } catch (error) {
+    for (const input of listened) input.removeEventListener("midimessage", onMessage);
+    listened.clear();
+    throw error;
+  }
 
   const onState = (event: MIDIConnectionEvent) => {
     const port = event.port;
-    if (port?.type === "input" && port.state === "connected") attach(port as MIDIInput);
+    if (port?.type === "input" && port.state === "connected") void attach(port as MIDIInput);
   };
   access.addEventListener("statechange", onState);
 

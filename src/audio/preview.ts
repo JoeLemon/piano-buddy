@@ -49,8 +49,16 @@ function tone(ctx: AudioContext, frequency: number, when: number, duration: numb
   osc.start(when);
   osc.stop(end);
   osc.onended = () => {
-    osc.disconnect();
-    gain.disconnect();
+    try {
+      osc.disconnect();
+    } catch {
+      // context already closed
+    }
+    try {
+      gain.disconnect();
+    } catch {
+      // context already closed
+    }
   };
   return osc;
 }
@@ -58,6 +66,7 @@ function tone(ctx: AudioContext, frequency: number, when: number, duration: numb
 function halt(nodes: OscillatorNode[], ctx: AudioContext) {
   const now = ctx.currentTime;
   for (const osc of nodes) {
+    osc.onended = null;
     try {
       osc.disconnect();
     } catch {
@@ -130,6 +139,10 @@ export function startMetronome(bpm: number): Playback {
     if (stopped) return;
     const horizon = ctx.currentTime + 0.25;
     while (next < horizon) {
+      if (next < ctx.currentTime) {
+        next += secondsPerBeat;
+        continue;
+      }
       nodes.push(tone(ctx, 880, next, 0.04));
       next += secondsPerBeat;
     }

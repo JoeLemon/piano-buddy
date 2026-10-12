@@ -93,7 +93,8 @@ function onOpenReading() {
     screen.value = "placement";
     return;
   }
-  if (profile.value.lessonId === "L1-test" && !(profile.value.l1RightPassed && profile.value.l1LeftPassed)) {
+  if (profile.value.l1RightPassed && profile.value.l1LeftPassed) return;
+  if (profile.value.lessonId === "L1-test") {
     const hands: Hand[] = profile.value.l1RightPassed
       ? ["LH"]
       : profile.value.l1LeftPassed

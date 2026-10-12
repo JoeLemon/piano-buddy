@@ -13,6 +13,7 @@ const emit = defineEmits<{
 }>();
 
 const bothLocked = computed(() => !props.rightUnlocked && !props.leftUnlocked);
+const bothPassed = computed(() => props.rightUnlocked && props.leftUnlocked);
 
 function openSight() {
   if (bothLocked.value) {
@@ -31,6 +32,7 @@ function openSight() {
       <button type="button" data-test="reading" @click="emit('open-reading')">先认谱</button>
       <button type="button" data-test="sight" @click="openSight">5 分钟视奏</button>
       <p v-if="bothLocked" class="note">先认识这五个音，视奏里只会用到它们。</p>
+      <p v-if="bothPassed" class="note">L1 的音已经通过了。</p>
       <button type="button" class="quiet" data-test="placement" @click="emit('open-placement')">三道自评</button>
     </div>
   </section>

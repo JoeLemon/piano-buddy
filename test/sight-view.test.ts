@@ -436,6 +436,23 @@ describe("App", () => {
     expect(wrapper.get("[data-score-id]").attributes("data-score-id")).not.toBe(playedId);
   });
 
+  it("stays on home when both hands have passed and 先认谱 is clicked", async () => {
+    await saveProfile({
+      ...initialProfile(),
+      assessment: { knowsTreble: true, knowsBass: true, keepsPulse: true },
+      lessonId: "L1-test",
+      l1RightPassed: true,
+      l1LeftPassed: true,
+    });
+    const wrapper = mount(App);
+    await untilText(wrapper, "5 分钟视奏");
+    await wrapper.get("[data-test=reading]").trigger("click");
+    await flushPromises();
+    expect(wrapper.find("[data-test=reading]").exists()).toBe(true);
+    expect(wrapper.find("[data-test=keyboard]").exists()).toBe(false);
+    expect(wrapper.text()).toContain("L1 的音已经通过了。");
+  });
+
   it("keeps an unlock after the view is created again", async () => {
     await saveProfile({
       ...initialProfile(),

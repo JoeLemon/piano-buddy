@@ -1,6 +1,6 @@
 import { Factory, Renderer, type StemmableNote } from "vexflow";
 import { pitchLabel, pitchToMidi } from "../domain/pitch";
-import type { Duration, Hand, Measure, NoteEvent, Score, Step } from "../domain/types";
+import type { Clef, Duration, Hand, Measure, NoteEvent, Score, Step } from "../domain/types";
 
 const WHITE_STEPS: readonly Step[] = ["C", "D", "E", "F", "G", "A", "B"];
 
@@ -29,6 +29,11 @@ export function whiteKeyMidis(): number[] {
   }
   midis.push(pitchToMidi({ step: "C", octave: 5, alteration: 0 }));
   return midis;
+}
+
+/** Middle line of the staff: B4 in treble, D3 in bass. */
+export function restPitch(clef: Clef): "B4" | "D3" {
+  return clef === "bass" ? "D3" : "B4";
 }
 
 export function renderScore(element: HTMLElement, score: Score, hand: Hand, showFingers: boolean): void {
@@ -60,7 +65,7 @@ export function renderScore(element: HTMLElement, score: Score, hand: Hand, show
   easy.set({ clef: stave.clef, time });
 
   stave.measures.forEach((measure, index) => {
-    const line = measure.notes.map(noteToken).join(", ");
+    const line = measure.notes.map((note) => noteToken(note, stave.clef)).join(", ");
     if (!line) return;
     const notes = easy.notes(line, { clef: stave.clef });
     if (showFingers) addFingers(factory, notes, measure);
@@ -84,9 +89,9 @@ function addFingers(factory: Factory, notes: StemmableNote[], measure: Measure):
   });
 }
 
-function noteToken(note: NoteEvent): string {
+function noteToken(note: NoteEvent, clef: Clef): string {
   const duration = VEX_DURATION[note.duration];
-  if (note.pitches.length === 0) return `B4/${duration}`;
+  if (note.pitches.length === 0) return `${restPitch(clef)}/${duration}`;
   if (note.pitches.length === 1) return `${pitchLabel(note.pitches[0])}/${duration}`;
   return `(${note.pitches.map((pitch) => pitchLabel(pitch)).join(" ")})/${duration}`;
 }

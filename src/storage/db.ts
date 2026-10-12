@@ -14,6 +14,7 @@ type ProfileDB = {
 };
 
 let dbPromise: Promise<IDBPDatabase<ProfileDB>> | null = null;
+let writeChain: Promise<unknown> = Promise.resolve();
 
 function getDb(): Promise<IDBPDatabase<ProfileDB>> {
   if (!dbPromise) {
@@ -35,6 +36,10 @@ export async function loadProfile(): Promise<Profile> {
 }
 
 export async function saveProfile(profile: Profile): Promise<void> {
-  const db = await getDb();
-  await db.put(STORE_NAME, profile, PROFILE_KEY);
+  const run = writeChain.then(async () => {
+    const db = await getDb();
+    await db.put(STORE_NAME, profile, PROFILE_KEY);
+  });
+  writeChain = run.then(() => undefined, () => undefined);
+  await run;
 }

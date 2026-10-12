@@ -1,3 +1,4 @@
+import { isPass, type CompareResult } from "./compare";
 import type { Hand, Score } from "./types";
 
 export type Assessment = {
@@ -130,6 +131,38 @@ export function recordFindKey(profile: Profile, targetLabel: string, correct: bo
   if (findCorrect < FIND_GOAL) return { ...profile, findCorrect };
   if (profile.lessonId === "L1-2") return advanceLesson(profile, "L1-3");
   return { ...profile, findCorrect, lessonPhase: "lines" };
+}
+
+export function applyTestResult(
+  profile: Profile,
+  hands: Hand[],
+  results: CompareResult[],
+): Profile {
+  let next: Profile = { ...profile };
+  let anyFailed = false;
+  let rightPassed = false;
+  for (let index = 0; index < hands.length; index++) {
+    const hand = hands[index];
+    const result = results[index];
+    if (!result || !isPass(result, 1)) {
+      anyFailed = true;
+      continue;
+    }
+    if (hand === "RH") {
+      rightPassed = true;
+      next = { ...next, l1RightPassed: true };
+    } else {
+      next = { ...next, l1LeftPassed: true };
+    }
+  }
+  if (anyFailed) {
+    const failStreak = next.failStreak + 1;
+    next = { ...next, failStreak, slowed: next.slowed || failStreak >= 3 };
+  } else {
+    next = { ...next, failStreak: 0 };
+  }
+  if (rightPassed && !hands.includes("LH")) return advanceLesson(next, "L1-4");
+  return next;
 }
 
 export function recordLineFinished(profile: Profile): Profile {

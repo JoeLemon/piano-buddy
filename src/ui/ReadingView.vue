@@ -136,18 +136,25 @@ function presentFind() {
   const profile = profileState.value;
   const nextHand = handFor(profile);
   hand.value = nextHand;
-  const queued = profile.weakPitchQueue[0];
-  if (queued && readable(queued)) {
+  const labels = nextHand === "RH" ? RH_LABELS : LH_LABELS;
+  const kept = profile.weakPitchQueue.filter((label) => labels.includes(label));
+  const queued = kept[0];
+  let next = profile;
+  if (kept.length !== profile.weakPitchQueue.length) {
+    next = { ...profile, weakPitchQueue: kept };
+  }
+  if (queued) {
     targetLabel.value = queued;
     if (props.midiConnected) {
       pendingQueueDrop.value = false;
-      commit({ ...profile, weakPitchQueue: profile.weakPitchQueue.slice(1) });
+      commit({ ...next, weakPitchQueue: kept.slice(1) });
     } else {
       pendingQueueDrop.value = true;
+      if (next !== profile) commit(next);
     }
   } else {
     pendingQueueDrop.value = false;
-    const labels = nextHand === "RH" ? RH_LABELS : LH_LABELS;
+    if (next !== profile) commit(next);
     targetLabel.value = labels[cycleIndex.value % labels.length];
     cycleIndex.value += 1;
   }
@@ -316,15 +323,6 @@ function fingerNumber(nextHand: Hand, label: string): number | null {
 
 function hintFor(label: string): string {
   return HINTS[label] ?? `${label} 在这只手的五指位置里，用对应的手指弹。`;
-}
-
-function readable(label: string): boolean {
-  try {
-    parsePitchLabel(label);
-    return true;
-  } catch {
-    return false;
-  }
 }
 
 function isFind(profile: Profile): boolean {

@@ -54,7 +54,7 @@ export async function subscribeMidi(onNote: (note: MidiNote) => void): Promise<(
 
   const onState = (event: MIDIConnectionEvent) => {
     const port = event.port;
-    if (port?.type === "input" && port.state === "connected") void attach(port as MIDIInput);
+    if (port?.type === "input" && port.state === "connected") void attach(port as MIDIInput).catch(() => {});
   };
   access.addEventListener("statechange", onState);
 

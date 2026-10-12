@@ -67,4 +67,37 @@ describe("subscribeMidi", () => {
     installAccess([input]);
     await expect(subscribeMidi(() => {})).rejects.toThrow("open-failed");
   });
+
+  it("handles a failed open after subscribe and retries on the next connect", async () => {
+    const reasons: unknown[] = [];
+    const onUnhandled = (reason: unknown) => {
+      reasons.push(reason);
+    };
+    process.on("unhandledRejection", onUnhandled);
+    const input = new FakeInput();
+    const access = installAccess([input]);
+    const unsubscribe = await subscribeMidi(() => {});
+    try {
+      input.connection = "closed";
+      input.failOpen = true;
+      access.dispatchEvent(connected(input));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(reasons).toEqual([]);
+      expect(input.openCalls).toBe(1);
+
+      access.dispatchEvent(connected(input));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(input.openCalls).toBe(2);
+      expect(reasons).toEqual([]);
+    } finally {
+      unsubscribe();
+      process.off("unhandledRejection", onUnhandled);
+    }
+  });
 });
+
+function connected(input: FakeInput) {
+  const state = new Event("statechange");
+  Object.assign(state, { port: input });
+  return state;
+}

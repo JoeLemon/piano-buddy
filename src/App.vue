@@ -25,6 +25,7 @@ import { loadProfile, saveProfile } from "./storage/db";
 import AppShell from "./ui/AppShell.vue";
 import HomeView from "./ui/HomeView.vue";
 import PlacementView from "./ui/PlacementView.vue";
+import L2ReadingView from "./ui/L2ReadingView.vue";
 import ReadingView from "./ui/ReadingView.vue";
 import ReviewView from "./ui/ReviewView.vue";
 import SightView from "./ui/SightView.vue";
@@ -127,6 +128,11 @@ function persist(next: Profile) {
 function onOpenReading() {
   if (!profile.value.lessonId) {
     screen.value = "placement";
+    return;
+  }
+  if (profile.value.lessonId.startsWith("L2")) {
+    forcedScore.value = null;
+    screen.value = "reading";
     return;
   }
   if (profile.value.l1RightPassed && profile.value.l1LeftPassed) return;
@@ -452,6 +458,12 @@ function lineMs(current: Score, hand: Hand, tempo: number): number {
         @open-placement="onOpenPlacement"
       />
       <PlacementView v-else-if="screen === 'placement'" @submit="onAssessment" />
+      <L2ReadingView
+        v-else-if="screen === 'reading' && profile.lessonId?.startsWith('L2')"
+        :profile="profile"
+        :midi-connected="midiConnected"
+        @update-profile="onProfile"
+      />
       <ReadingView
         v-else-if="screen === 'reading'"
         :profile="profile"

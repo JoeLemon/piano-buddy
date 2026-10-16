@@ -3,6 +3,7 @@ import { pitchLabel, pitchToMidi } from "../domain/pitch";
 import type { Clef, Duration, Hand, Measure, NoteEvent, Score, Step } from "../domain/types";
 
 const WHITE_STEPS: readonly Step[] = ["C", "D", "E", "F", "G", "A", "B"];
+const BLACK_STEPS: readonly Step[] = ["C", "D", "F", "G", "A"];
 
 const VEX_DURATION: Record<Duration, string> = {
   w: "w",
@@ -28,6 +29,17 @@ export function whiteKeyMidis(): number[] {
     }
   }
   midis.push(pitchToMidi({ step: "C", octave: 5, alteration: 0 }));
+  return midis;
+}
+
+/** Black-key MIDI numbers sitting between the C3–C5 white keys. */
+export function blackKeyMidis(): number[] {
+  const midis: number[] = [];
+  for (const octave of [3, 4]) {
+    for (const step of BLACK_STEPS) {
+      midis.push(pitchToMidi({ step, octave, alteration: 1 }));
+    }
+  }
   return midis;
 }
 

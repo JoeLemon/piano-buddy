@@ -49,6 +49,46 @@ describe("L2 profile gates", () => {
     expect(startL2IfReady({ ...initialProfile(), l1RightPassed: true, l1LeftPassed: true, lessonId: "L1-test" }).lessonId).toBe("L2-1");
   });
 
+  it("keeps l2Slowed sticky after L2 pass (match L1)", () => {
+    const pass = {
+      pitchErrors: 0, rhythmBreaks: 0, firstWrongLabel: null,
+      wrongPitchNoteIds: [], lateNoteIds: [],
+    };
+    const fail = {
+      pitchErrors: 3, rhythmBreaks: 0, firstWrongLabel: "C4",
+      wrongPitchNoteIds: ["a"], lateNoteIds: [],
+    };
+    let p = { ...initialProfile(), l1RightPassed: true, l1LeftPassed: true };
+    p = applyL2TestResult(p, fail);
+    p = applyL2TestResult(p, fail);
+    p = applyL2TestResult(p, fail);
+    expect(p.l2Slowed).toBe(true);
+    p = applyL2TestResult(p, pass);
+    expect(p.l2Passed).toBe(true);
+    expect(p.l2FailStreak).toBe(0);
+    expect(p.l2Slowed).toBe(true);
+    expect(testBpmForLevel(p, 2)).toBe(52);
+  });
+
+  it("startL2IfReady resets lesson progress via advanceLesson", () => {
+    const dirty = {
+      ...initialProfile(),
+      l1RightPassed: true,
+      l1LeftPassed: true,
+      lessonId: "L1-test" as Profile["lessonId"],
+      lessonPhase: "lines" as const,
+      findCorrect: 5,
+      linesCompleted: 1,
+      tapStreak: 3,
+    };
+    const next = startL2IfReady(dirty);
+    expect(next.lessonId).toBe("L2-1");
+    expect(next.lessonPhase).toBe("notes");
+    expect(next.findCorrect).toBe(0);
+    expect(next.linesCompleted).toBe(0);
+    expect(next.tapStreak).toBe(0);
+  });
+
   it("keeps L1 sight and tempo separate from the L2 streak", () => {
     const rightOnly = { ...initialProfile(), l1RightPassed: true, failStreak: 1, slowed: false };
     expect(canEnterSight(rightOnly, "RH")).toBe(true);

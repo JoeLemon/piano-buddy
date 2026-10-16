@@ -155,6 +155,7 @@ export function testBpmForLevel(profile: Profile, level: 1 | 2): number {
   return profile.l2Slowed ? 52 : 60;
 }
 
+// Task 4: collapse into passLimit(2) / isPass(result, 2).
 const L2_PITCH_LIMIT = 2;
 const L2_RHYTHM_LIMIT = 2;
 
@@ -164,6 +165,7 @@ function l2TestPassed(result: CompareResult): boolean {
 
 export function applyL2TestResult(profile: Profile, result: CompareResult): Profile {
   if (l2TestPassed(result)) {
+    // match L1: slowed stays after pass
     return { ...profile, l2Passed: true, l2FailStreak: 0 };
   }
   const l2FailStreak = profile.l2FailStreak + 1;

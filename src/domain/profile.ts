@@ -9,12 +9,28 @@ export type Assessment = {
 
 export type Profile = {
   assessment: Assessment | null;
-  lessonId: "L1-1" | "L1-2" | "L1-3" | "L1-4" | "L1-test" | null;
+  lessonId:
+    | "L1-1"
+    | "L1-2"
+    | "L1-3"
+    | "L1-4"
+    | "L1-test"
+    | "L2-1"
+    | "L2-2"
+    | "L2-3"
+    | "L2-4"
+    | "L2-5"
+    | "L2-6"
+    | "L2-test"
+    | null;
   lessonPhase: "notes" | "lines";
   l1RightPassed: boolean;
   l1LeftPassed: boolean;
   failStreak: number;
   slowed: boolean;
+  l2Passed: boolean;
+  l2FailStreak: number;
+  l2Slowed: boolean;
   weakPitchQueue: string[];
   findCorrect: number;
   linesCompleted: number;
@@ -35,6 +51,9 @@ export function initialProfile(): Profile {
     l1LeftPassed: false,
     failStreak: 0,
     slowed: false,
+    l2Passed: false,
+    l2FailStreak: 0,
+    l2Slowed: false,
     weakPitchQueue: [],
     findCorrect: 0,
     linesCompleted: 0,
@@ -60,6 +79,9 @@ export function mergeProfile(stored: Partial<Profile> | null | undefined): Profi
     errorSnippets: stored.errorSnippets ?? [],
     seenReadingTips: stored.seenReadingTips ?? false,
     seenSightTips: stored.seenSightTips ?? false,
+    l2Passed: stored.l2Passed ?? false,
+    l2FailStreak: stored.l2FailStreak ?? 0,
+    l2Slowed: stored.l2Slowed ?? false,
   };
 }
 
@@ -99,6 +121,16 @@ export function canEnterSight(profile: Profile, hand: Hand): boolean {
   return hand === "RH" ? profile.l1RightPassed : profile.l1LeftPassed;
 }
 
+export function canEnterL2(profile: Profile): boolean {
+  return profile.l1RightPassed && profile.l1LeftPassed;
+}
+
+/** L1 stays per hand. L2 ignores hand and needs both L1 hands plus the L2 test. */
+export function canEnterSightLevel(profile: Profile, level: 1 | 2, hand?: Hand): boolean {
+  if (level === 1) return hand ? canEnterSight(profile, hand) : false;
+  return canEnterL2(profile) && profile.l2Passed;
+}
+
 export function registerSightUse(
   profile: Profile,
   scoreId: string,
@@ -116,6 +148,36 @@ export function registerSightUse(
 
 export function testBpm(profile: Profile): number {
   return profile.slowed ? Math.max(44, 52) : 60;
+}
+
+export function testBpmForLevel(profile: Profile, level: 1 | 2): number {
+  if (level === 1) return testBpm(profile);
+  return profile.l2Slowed ? 52 : 60;
+}
+
+const L2_PITCH_LIMIT = 2;
+const L2_RHYTHM_LIMIT = 2;
+
+function l2TestPassed(result: CompareResult): boolean {
+  return result.pitchErrors <= L2_PITCH_LIMIT && result.rhythmBreaks < L2_RHYTHM_LIMIT;
+}
+
+export function applyL2TestResult(profile: Profile, result: CompareResult): Profile {
+  if (l2TestPassed(result)) {
+    return { ...profile, l2Passed: true, l2FailStreak: 0 };
+  }
+  const l2FailStreak = profile.l2FailStreak + 1;
+  return {
+    ...profile,
+    l2FailStreak,
+    l2Slowed: profile.l2Slowed || l2FailStreak >= 3,
+  };
+}
+
+export function startL2IfReady(profile: Profile): Profile {
+  if (!canEnterL2(profile)) return profile;
+  if (profile.lessonId?.startsWith("L2")) return profile;
+  return advanceLesson(profile, "L2-1");
 }
 
 const STEADY_GAP_MIN_MS = 800;

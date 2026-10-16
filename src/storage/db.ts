@@ -1,5 +1,5 @@
 import { openDB, type IDBPDatabase } from "idb";
-import { initialProfile, type Profile } from "../domain/profile";
+import { initialProfile, mergeProfile, type Profile } from "../domain/profile";
 
 const DB_NAME = "piano-buddy";
 const DB_VERSION = 1;
@@ -32,7 +32,8 @@ function getDb(): Promise<IDBPDatabase<ProfileDB>> {
 export async function loadProfile(): Promise<Profile> {
   const db = await getDb();
   const stored = await db.get(STORE_NAME, PROFILE_KEY);
-  return stored ?? initialProfile();
+  if (!stored) return initialProfile();
+  return mergeProfile(stored);
 }
 
 export async function saveProfile(profile: Profile): Promise<void> {

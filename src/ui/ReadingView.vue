@@ -2,6 +2,13 @@
 import { computed, onBeforeUnmount, ref, watch } from "vue";
 import { startMetronome } from "../audio/preview";
 import { generateL1 } from "../domain/generate";
+import {
+  currentLessonIndex,
+  lessonAdvanceCopy,
+  lessonGoalText,
+  lessonStepLabel,
+  lessonSteps,
+} from "../domain/lessonProgress";
 import { parsePitchLabel, pitchLabel, pitchToMidi } from "../domain/pitch";
 import {
   recordFindKey,
@@ -26,6 +33,11 @@ const emit = defineEmits<{
 
 const TAP_CARD = "跟着节拍器敲任何一个键。只看间隔稳不稳。";
 const LINE_LEAD = "弹出谱上的音。这个音弹对才进入下一音。";
+const READING_TIPS = [
+  "可以看键盘。",
+  "这个阶段的目标是认准，不是连续视奏。",
+  "认熟之后，视奏里才会出现这些音。",
+];
 
 const HINTS: Record<string, string> = {
   C4: "中央 C 写在高音谱下加一线，右手大拇指。",
@@ -53,11 +65,17 @@ const noteIndex = ref(0);
 const lastTapMs = ref<number | null>(null);
 const cycleIndex = ref(0);
 const pendingQueueDrop = ref(false);
+const advanceBanner = ref("");
+const showTips = ref(!props.profile.seenReadingTips);
 
 let midiToken = 0;
 let stopMidi: (() => void) | null = null;
 let pulse: { stop: () => void } | null = null;
+let bannerTimer: ReturnType<typeof setTimeout> | null = null;
 
+const steps = lessonSteps();
+const activeStep = computed(() => currentLessonIndex(profileState.value));
+const goalText = computed(() => lessonGoalText(profileState.value));
 const showsStaff = computed(() => isFind(profileState.value) || isLine(profileState.value));
 const cardText = computed(() => {
   const profile = profileState.value;
@@ -73,6 +91,12 @@ const highlightMidi = computed(() => {
   if (isLine(profile)) return sounding.value[noteIndex.value]?.midi ?? null;
   return null;
 });
+
+function dismissTips() {
+  showTips.value = false;
+  if (profileState.value.seenReadingTips) return;
+  commit({ ...profileState.value, seenReadingTips: true });
+}
 
 watch(
   () => [props.profile.lessonId, props.profile.lessonPhase] as const,
@@ -117,6 +141,7 @@ onBeforeUnmount(() => {
   stopMidi = null;
   pulse?.stop();
   pulse = null;
+  if (bannerTimer) clearTimeout(bannerTimer);
 });
 
 function beginLesson() {
@@ -213,11 +238,25 @@ function onLine(note: MidiNote) {
 
 function commit(next: Profile) {
   if (sameProgress(profileState.value, next)) return;
+  const fromLesson = profileState.value.lessonId;
   const lessonChanged = next.lessonId !== profileState.value.lessonId
     || next.lessonPhase !== profileState.value.lessonPhase;
+  if (next.lessonId !== fromLesson) {
+    const copy = lessonAdvanceCopy(fromLesson, next.lessonId);
+    if (copy) showAdvance(copy);
+  }
   profileState.value = next;
   emit("update-profile", next);
   if (lessonChanged) beginLesson();
+}
+
+function showAdvance(copy: string) {
+  advanceBanner.value = copy;
+  if (bannerTimer) clearTimeout(bannerTimer);
+  bannerTimer = setTimeout(() => {
+    advanceBanner.value = "";
+    bannerTimer = null;
+  }, 2000);
 }
 
 function sameProgress(current: Profile, next: Profile): boolean {
@@ -227,6 +266,7 @@ function sameProgress(current: Profile, next: Profile): boolean {
     && current.findCorrect === next.findCorrect
     && current.linesCompleted === next.linesCompleted
     && current.lastSeed === next.lastSeed
+    && current.seenReadingTips === next.seenReadingTips
     && current.weakPitchQueue.length === next.weakPitchQueue.length
     && current.weakPitchQueue.every((label, index) => label === next.weakPitchQueue[index]);
 }
@@ -341,55 +381,110 @@ function handFor(profile: Profile): Hand {
 </script>
 
 <template>
-  <section class="reading">
-    <div class="panel">
-      <h1>识谱</h1>
-      <p v-if="!midiConnected" class="warn">请连接 MIDI 键盘</p>
-      <p v-if="cardText" class="card">{{ cardText }}</p>
-      <p v-if="lineLead" class="card">{{ lineLead }}</p>
-      <p v-if="hint" class="hint">{{ hint }}</p>
-      <div v-if="showsStaff" ref="staffEl" class="staff"></div>
-      <KeyboardDiagram :highlight-midi="highlightMidi" />
+  <div class="surface">
+    <ol class="progress" data-test="lesson-progress">
+      <li
+        v-for="(step, index) in steps"
+        :key="step"
+        :data-active="index === activeStep ? 'true' : 'false'"
+        :data-done="index < activeStep ? 'true' : 'false'"
+      >
+        {{ lessonStepLabel(step) }}
+      </li>
+    </ol>
+    <p v-if="goalText" class="goal" data-test="lesson-goal">{{ goalText }}</p>
+    <p v-if="advanceBanner" class="banner" data-test="advance-banner">{{ advanceBanner }}</p>
+    <div v-if="showTips" class="tips" data-test="reading-tips">
+      <p v-for="tip in READING_TIPS" :key="tip">{{ tip }}</p>
+      <button type="button" class="primary" data-test="dismiss-reading-tips" @click="dismissTips">
+        知道了
+      </button>
     </div>
-  </section>
+    <p v-if="!midiConnected" class="warn">请连接 MIDI 键盘。卡片可以先看。</p>
+    <p v-if="cardText" class="card">{{ cardText }}</p>
+    <p v-if="lineLead" class="card">{{ lineLead }}</p>
+    <p v-if="hint" class="hint">{{ hint }}</p>
+    <div v-if="showsStaff" ref="staffEl" class="staff"></div>
+    <KeyboardDiagram :highlight-midi="highlightMidi" />
+  </div>
 </template>
 
 <style scoped>
-.reading {
-  min-height: 100vh;
-  box-sizing: border-box;
-  background: #faf7f1;
-  color: #1c1c1c;
-  color-scheme: light;
-  font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+.progress {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin: 0 0 0.75rem;
+  padding: 0;
+  list-style: none;
 }
 
-.panel {
-  max-width: 52rem;
-  margin: 0 auto;
-  padding: 2rem 1.25rem;
+.progress li {
+  padding: 0.25rem 0.55rem;
+  border: 1px solid rgb(42 51 68 / 18%);
+  border-radius: 999px;
+  color: var(--pb-muted);
+  font-size: 0.85rem;
 }
 
-h1 {
-  margin: 0 0 0.5rem;
-  font-size: 1.75rem;
+.progress li[data-active="true"] {
+  background: var(--pb-accent);
+  border-color: var(--pb-accent);
+  color: var(--pb-accent-text);
   font-weight: 600;
 }
 
+.progress li[data-done="true"] {
+  color: var(--pb-ink);
+}
+
+.goal,
+.banner,
 .warn,
 .card,
-.hint {
-  margin: 0 0 1rem;
+.hint,
+.tips p {
+  margin: 0 0 0.85rem;
   line-height: 1.5;
 }
 
+.goal {
+  color: var(--pb-ink);
+  font-weight: 600;
+}
+
+.banner {
+  padding: 0.65rem 0.8rem;
+  border-radius: var(--pb-radius);
+  background: rgb(201 132 42 / 16%);
+  color: var(--pb-ink);
+}
+
 .warn {
-  color: #8a3d12;
+  color: var(--pb-warn);
 }
 
 .card,
-.hint {
-  color: #3f3f3f;
+.hint,
+.tips p {
+  color: var(--pb-muted);
+}
+
+.tips {
+  margin: 0 0 1rem;
+  padding: 0.9rem 1rem;
+  border: 1px solid rgb(42 51 68 / 14%);
+  border-radius: var(--pb-radius);
+  background: rgb(232 238 242 / 55%);
+}
+
+.primary {
+  padding: 0.5rem 0.85rem;
+  border: 1px solid var(--pb-accent);
+  border-radius: var(--pb-radius);
+  background: var(--pb-accent);
+  color: var(--pb-accent-text);
+  cursor: pointer;
 }
 
 .staff {

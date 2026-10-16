@@ -8,6 +8,8 @@ export type CompareResult = {
   pitchErrors: number;
   rhythmBreaks: number;
   firstWrongLabel: string | null;
+  wrongPitchNoteIds: string[];
+  lateNoteIds: string[];
 };
 
 const PASS_LIMIT: Partial<Record<Level, number>> = { 1: 2 };
@@ -24,6 +26,8 @@ export function compare(
   let pitchErrors = 0;
   let rhythmBreaks = 0;
   let firstWrongLabel: string | null = null;
+  const wrongPitchNoteIds: string[] = [];
+  const lateNoteIds: string[] = [];
 
   for (const measure of measures) {
     for (const note of measure.notes) {
@@ -37,14 +41,18 @@ export function compare(
       if (hit) cursor += 1;
       if (!hit || hit.midi !== pitchToMidi(pitch)) {
         pitchErrors += 1;
+        wrongPitchNoteIds.push(note.id);
         if (firstWrongLabel === null) firstWrongLabel = pitchLabel(pitch);
       }
-      if (hit && hit.timeMs / (60000 / bpm) - beat > 2) rhythmBreaks += 1;
+      if (hit && hit.timeMs / (60000 / bpm) - beat > 2) {
+        rhythmBreaks += 1;
+        lateNoteIds.push(note.id);
+      }
       beat += beats;
     }
   }
 
-  return { pitchErrors, rhythmBreaks, firstWrongLabel };
+  return { pitchErrors, rhythmBreaks, firstWrongLabel, wrongPitchNoteIds, lateNoteIds };
 }
 
 export function passLimit(level: Level): number {

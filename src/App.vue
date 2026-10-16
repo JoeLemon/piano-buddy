@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { startMetronome } from "./audio/preview";
 import { compare, type CompareResult, type PlayedNote } from "./domain/compare";
-import { feedbackText } from "./domain/feedback";
+import { feedbackText, sightFeedbackText } from "./domain/feedback";
 import { generateL1 } from "./domain/generate";
 import { pitchToMidi } from "./domain/pitch";
 import {
@@ -10,6 +10,7 @@ import {
   applyTestResult,
   canEnterSight,
   initialProfile,
+  pruneExhaustedErrorSnippet,
   routeAfterAssessment,
   testBpm,
   type Assessment,
@@ -18,8 +19,10 @@ import {
 import type { Hand, Score } from "./domain/types";
 import { DURATION_BEATS } from "./domain/vocabulary";
 import { subscribeMidi, type MidiNote } from "./midi/access";
+import { markStaffNotes } from "./notation/markStaff";
 import { renderScore } from "./notation/renderScore";
 import { loadProfile, saveProfile } from "./storage/db";
+import AppShell from "./ui/AppShell.vue";
 import HomeView from "./ui/HomeView.vue";
 import PlacementView from "./ui/PlacementView.vue";
 import ReadingView from "./ui/ReadingView.vue";
@@ -32,7 +35,14 @@ const profile = ref<Profile>(initialProfile());
 const screen = ref<Screen>("loading");
 const midiConnected = ref(false);
 const sightSession = ref(0);
-const review = ref<{ feedback: string; score: Score; hand: Hand; wrongNoteIds: string[] } | null>(null);
+const forcedScore = ref<Score | null>(null);
+const review = ref<{
+  feedback: string;
+  score: Score;
+  hand: Hand;
+  wrongPitchNoteIds: string[];
+  lateNoteIds: string[];
+} | null>(null);
 
 const testHands = ref<Hand[]>([]);
 const testIndex = ref(0);
@@ -44,6 +54,32 @@ const testPhase = ref<"play" | "feedback">("play");
 const testListening = ref(false);
 const testComplete = ref(false);
 const testStaffEl = ref<HTMLElement | null>(null);
+
+const shellTitle = computed(() => {
+  switch (screen.value) {
+    case "home":
+      return undefined;
+    case "placement":
+      return undefined;
+    case "reading":
+      return "识谱";
+    case "sight":
+      return "视奏";
+    case "review":
+      return undefined;
+    case "test":
+      return "过关测试";
+    default:
+      return undefined;
+  }
+});
+
+const showBack = computed(
+  () => screen.value === "reading"
+    || screen.value === "sight"
+    || screen.value === "review"
+    || screen.value === "test",
+);
 
 let testMidiToken = 0;
 let testStopMidi: (() => void) | null = null;
@@ -103,6 +139,7 @@ function onOpenReading() {
     startTest(hands);
     return;
   }
+  forcedScore.value = null;
   screen.value = "reading";
 }
 
@@ -111,6 +148,16 @@ function onOpenSight() {
     onOpenReading();
     return;
   }
+  forcedScore.value = null;
+  sightSession.value += 1;
+  screen.value = "sight";
+}
+
+function onOpenError() {
+  const snippet = profile.value.errorSnippets[0];
+  if (!snippet) return;
+  if (!canEnterSight(profile.value, "RH") && !canEnterSight(profile.value, "LH")) return;
+  forcedScore.value = snippet;
   sightSession.value += 1;
   screen.value = "sight";
 }
@@ -143,26 +190,49 @@ function onProfile(next: Profile) {
   }
 }
 
-function onSightFinished(payload: { score: Score; result: CompareResult; hand: Hand; wrongNoteIds: string[] }) {
+function onSightFinished(payload: {
+  score: Score;
+  result: CompareResult;
+  hand: Hand;
+  wrongPitchNoteIds: string[];
+  lateNoteIds: string[];
+}) {
   let next = profile.value;
   if (payload.result.pitchErrors > 0 || payload.result.rhythmBreaks > 0) {
     if (!next.errorSnippets.some((item) => item.id === payload.score.id)) {
       next = { ...next, errorSnippets: [...next.errorSnippets, payload.score] };
     }
   }
+  next = pruneExhaustedErrorSnippet(next, payload.score.id);
   persist(next);
   review.value = {
-    feedback: feedbackText(payload.result, 1, payload.hand),
+    feedback: sightFeedbackText(payload.result),
     score: payload.score,
     hand: payload.hand,
-    wrongNoteIds: payload.wrongNoteIds,
+    wrongPitchNoteIds: payload.wrongPitchNoteIds,
+    lateNoteIds: payload.lateNoteIds,
   };
+  forcedScore.value = null;
   screen.value = "review";
 }
 
 function onReviewNext() {
   persist({ ...profile.value, lastSeed: profile.value.lastSeed + 1 });
   review.value = null;
+  forcedScore.value = null;
+  sightSession.value += 1;
+  screen.value = "sight";
+}
+
+function onReviewRetryError() {
+  const snippet = profile.value.errorSnippets.find((item) => item.id === review.value?.score.id)
+    ?? profile.value.errorSnippets[0];
+  review.value = null;
+  if (!snippet) {
+    screen.value = "home";
+    return;
+  }
+  forcedScore.value = snippet;
   sightSession.value += 1;
   screen.value = "sight";
 }
@@ -170,6 +240,7 @@ function onReviewNext() {
 function goHome() {
   stopTestAudio();
   review.value = null;
+  forcedScore.value = null;
   screen.value = profile.value.assessment ? "home" : "placement";
 }
 
@@ -312,7 +383,9 @@ function paintTestWrong() {
   const el = testStaffEl.value;
   const current = testScore.value;
   if (!el || !current) return;
-  markWrongNotes(el, current, activeTestHand.value, testWrong);
+  const colors = new Map<string, string>();
+  for (const id of testWrong) colors.set(id, "#8a3d12");
+  markStaffNotes(el, current, activeTestHand.value, colors);
 }
 
 async function watchMidi() {
@@ -356,125 +429,87 @@ function lineMs(current: Score, hand: Hand, tempo: number): number {
   );
   return Math.round(beats * (60000 / tempo));
 }
-
-function markWrongNotes(element: HTMLElement, current: Score, hand: Hand, ids: ReadonlySet<string>) {
-  const groups = Array.from(element.querySelectorAll(".vf-stavenote"));
-  const notes = (current.staves[hand]?.measures ?? []).flatMap((measure) => measure.notes);
-  notes.forEach((note, index) => {
-    const group = groups[index];
-    if (!group || !ids.has(note.id)) return;
-    group.setAttribute("data-wrong", "true");
-    const paths = group.querySelectorAll("path");
-    for (let pathIndex = 0; pathIndex < paths.length; pathIndex += 1) {
-      const path = paths.item(pathIndex);
-      if (!path) continue;
-      path.setAttribute("fill", "#8a3d12");
-      path.setAttribute("stroke", "#8a3d12");
-    }
-  });
-}
 </script>
 
 <template>
   <main class="app">
     <p v-if="screen === 'loading'" class="loading">正在读取档案</p>
-    <HomeView
-      v-else-if="screen === 'home'"
-      :right-unlocked="canEnterSight(profile, 'RH')"
-      :left-unlocked="canEnterSight(profile, 'LH')"
-      @open-reading="onOpenReading"
-      @open-sight="onOpenSight"
-      @open-placement="onOpenPlacement"
-    />
-    <PlacementView v-else-if="screen === 'placement'" @submit="onAssessment" />
-    <div v-else-if="screen === 'reading'" class="shell">
-      <button type="button" class="back" data-test="home" @click="goHome">返回</button>
-      <ReadingView :profile="profile" :midi-connected="midiConnected" @update-profile="onProfile" />
-    </div>
-    <div v-else-if="screen === 'sight'" class="shell">
-      <button type="button" class="back" data-test="home" @click="goHome">返回</button>
-      <SightView
-        :key="sightSession"
+    <AppShell
+      v-else
+      :title="shellTitle"
+      :midi-connected="midiConnected"
+      :show-back="showBack"
+      @back="goHome"
+    >
+      <HomeView
+        v-if="screen === 'home'"
+        :profile="profile"
+        :right-unlocked="canEnterSight(profile, 'RH')"
+        :left-unlocked="canEnterSight(profile, 'LH')"
+        @open-reading="onOpenReading"
+        @open-sight="onOpenSight"
+        @open-error="onOpenError"
+        @open-placement="onOpenPlacement"
+      />
+      <PlacementView v-else-if="screen === 'placement'" @submit="onAssessment" />
+      <ReadingView
+        v-else-if="screen === 'reading'"
         :profile="profile"
         :midi-connected="midiConnected"
         @update-profile="onProfile"
+      />
+      <SightView
+        v-else-if="screen === 'sight'"
+        :key="sightSession"
+        :profile="profile"
+        :midi-connected="midiConnected"
+        :forced-score="forcedScore"
+        @update-profile="onProfile"
         @finished="onSightFinished"
       />
-    </div>
-    <div v-else-if="screen === 'review' && review" class="shell">
-      <button type="button" class="back" data-test="home" @click="goHome">返回</button>
       <ReviewView
+        v-else-if="screen === 'review' && review"
         :feedback="review.feedback"
         :score="review.score"
         :hand="review.hand"
-        :wrong-note-ids="review.wrongNoteIds"
+        :wrong-pitch-note-ids="review.wrongPitchNoteIds"
+        :late-note-ids="review.lateNoteIds"
+        :has-error-book="profile.errorSnippets.length > 0"
         @next="onReviewNext"
+        @home="goHome"
+        @retry-error="onReviewRetryError"
       />
-    </div>
-    <section
-      v-else-if="screen === 'test'"
-      class="test"
-      data-test="pass-test"
-      :data-hand="activeTestHand"
-      :data-hands="testHands.join(',')"
-      :data-mode="testScore?.mode"
-      :data-score-id="testScore?.id"
-      :data-listening="testListening ? 'true' : 'false'"
-    >
-      <button type="button" class="back" data-test="home" @click="goHome">返回</button>
-      <div class="panel">
-        <h1>过关测试</h1>
+      <div
+        v-else-if="screen === 'test'"
+        class="surface"
+        data-test="pass-test"
+        :data-hand="activeTestHand"
+        :data-hands="testHands.join(',')"
+        :data-mode="testScore?.mode"
+        :data-score-id="testScore?.id"
+        :data-listening="testListening ? 'true' : 'false'"
+      >
         <p v-if="!midiConnected" class="warn">请连接 MIDI 键盘</p>
         <p class="hand">{{ activeTestHand === "RH" ? "右手" : "左手" }}</p>
         <div ref="testStaffEl" class="staff"></div>
         <p v-if="testFeedback" data-test="feedback">{{ testFeedback }}</p>
-        <button v-if="testFeedback" type="button" data-test="continue" @click="continueAfterFeedback">继续</button>
+        <button v-if="testFeedback" type="button" class="primary" data-test="continue" @click="continueAfterFeedback">
+          继续
+        </button>
       </div>
-    </section>
+    </AppShell>
   </main>
 </template>
 
 <style scoped>
 .app {
   min-height: 100vh;
-  background: #faf7f1;
-  color: #1c1c1c;
-  color-scheme: light;
-  font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
 }
 
-.loading,
-.back {
+.loading {
   margin: 0;
-}
-
-.back {
-  display: inline-block;
-  margin: 1rem 1.25rem 0;
-  padding: 0;
-  border: 0;
-  background: transparent;
-  color: #3f3f3f;
-  font: inherit;
-  text-decoration: underline;
-  text-underline-offset: 0.2rem;
-  cursor: pointer;
-}
-
-.test {
-  min-height: 100vh;
-}
-
-.panel {
-  max-width: 52rem;
-  margin: 0 auto;
-  padding: 1rem 1.25rem 2rem;
-}
-
-h1 {
-  margin: 0 0 0.5rem;
-  font-size: 1.75rem;
-  font-weight: 600;
+  padding: 2rem 1.25rem;
+  color: var(--pb-muted);
 }
 
 .warn,
@@ -484,12 +519,11 @@ h1 {
 }
 
 .warn {
-  color: #8a3d12;
+  color: var(--pb-warn);
 }
 
-.hand,
-.panel p {
-  color: #3f3f3f;
+.hand {
+  color: var(--pb-muted);
 }
 
 .staff {
@@ -497,18 +531,17 @@ h1 {
   margin: 0 0 1rem;
 }
 
-button[data-test="continue"] {
+.primary {
   padding: 0.55rem 0.9rem;
-  border: 1px solid #2a2a2a;
-  border-radius: 4px;
-  background: #f3c84b;
-  color: #1c1c1c;
-  font: inherit;
+  border: 1px solid var(--pb-accent);
+  border-radius: var(--pb-radius);
+  background: var(--pb-accent);
+  color: var(--pb-accent-text);
   cursor: pointer;
 }
 
 .staff :deep([data-wrong] path) {
-  fill: #8a3d12;
-  stroke: #8a3d12;
+  fill: var(--pb-pitch-mark);
+  stroke: var(--pb-pitch-mark);
 }
 </style>

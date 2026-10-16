@@ -54,7 +54,7 @@ export function renderScore(element: HTMLElement, score: Score, hand: Hand, show
   });
 
   const width = cursor + 10;
-  const height = 240;
+  const height = 280;
   const factory = new Factory({
     renderer: { elementId: null, width, height },
   });
@@ -71,7 +71,7 @@ export function renderScore(element: HTMLElement, score: Score, hand: Hand, show
     if (showFingers) addFingers(factory, notes, measure);
     const voice = easy.voice(notes, { time });
     const placement = placements[index];
-    const system = factory.System({ x: placement.x, y: 80, width: placement.width });
+    const system = factory.System({ x: placement.x, y: 90, width: placement.width });
     const rendered = system.addStave({ voices: [voice] });
     if (index === 0) {
       rendered.addClef(stave.clef).addTimeSignature(time).addKeySignature(score.keySignature);
@@ -79,14 +79,34 @@ export function renderScore(element: HTMLElement, score: Score, hand: Hand, show
   });
 
   factory.draw();
+  styleFingerAnnotations(host);
 }
 
 function addFingers(factory: Factory, notes: StemmableNote[], measure: Measure): void {
   measure.notes.forEach((event, index) => {
     const finger = event.fingers?.[0];
     if (finger == null) return;
-    notes[index]?.addModifier(factory.Annotation({ text: String(finger), vJustify: "top" }));
+    notes[index]?.addModifier(
+      factory.Annotation({
+        text: String(finger),
+        vJustify: "top",
+        font: { family: "IBM Plex Sans, sans-serif", size: 14, weight: "600" },
+      }),
+    );
   });
+}
+
+function styleFingerAnnotations(host: HTMLElement): void {
+  const texts = host.querySelectorAll(".vf-annotation text, .vf-annotation");
+  for (let index = 0; index < texts.length; index += 1) {
+    const node = texts.item(index);
+    if (!(node instanceof SVGElement)) continue;
+    node.setAttribute("fill", "#1a2332");
+    if (node instanceof SVGTextElement) {
+      node.setAttribute("font-size", "14");
+      node.setAttribute("font-weight", "600");
+    }
+  }
 }
 
 function noteToken(note: NoteEvent, clef: Clef): string {

@@ -22,6 +22,8 @@ export type Profile = {
   sightUses: Record<string, number>;
   errorSnippets: Score[];
   lastSeed: number;
+  seenReadingTips: boolean;
+  seenSightTips: boolean;
 };
 
 export function initialProfile(): Profile {
@@ -40,6 +42,35 @@ export function initialProfile(): Profile {
     sightUses: {},
     errorSnippets: [],
     lastSeed: 1,
+    seenReadingTips: false,
+    seenSightTips: false,
+  };
+}
+
+/** Fill missing fields when loading an older stored profile. */
+export function mergeProfile(stored: Partial<Profile> | null | undefined): Profile {
+  const base = initialProfile();
+  if (!stored) return base;
+  return {
+    ...base,
+    ...stored,
+    assessment: stored.assessment ?? null,
+    weakPitchQueue: stored.weakPitchQueue ?? [],
+    sightUses: stored.sightUses ?? {},
+    errorSnippets: stored.errorSnippets ?? [],
+    seenReadingTips: stored.seenReadingTips ?? false,
+    seenSightTips: stored.seenSightTips ?? false,
+  };
+}
+
+/** Drop a sight line from the error book once it has been used twice. */
+export function pruneExhaustedErrorSnippet(profile: Profile, scoreId: string): Profile {
+  const uses = profile.sightUses[scoreId] ?? 0;
+  if (uses < 2) return profile;
+  if (!profile.errorSnippets.some((item) => item.id === scoreId)) return profile;
+  return {
+    ...profile,
+    errorSnippets: profile.errorSnippets.filter((item) => item.id !== scoreId),
   };
 }
 

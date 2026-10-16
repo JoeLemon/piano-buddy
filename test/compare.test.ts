@@ -41,6 +41,8 @@ describe("compare", () => {
     expect(result.pitchErrors).toBe(1);
     expect(result.rhythmBreaks).toBe(0);
     expect(result.firstWrongLabel).toBe("D4");
+    expect(result.wrongPitchNoteIds).toEqual(["0-1"]);
+    expect(result.lateNoteIds).toEqual([]);
   });
 
   it("counts a note more than two beats late as a rhythm break", () => {
@@ -48,15 +50,29 @@ describe("compare", () => {
       midi: ({ C: 60, D: 62, E: 64, F: 65, G: 67 })[step],
       timeMs: index === 1 ? 3500 : index * 1000,
     }));
-    expect(compare(eightQuarters(), "RH", played, 60).rhythmBreaks).toBe(1);
+    const result = compare(eightQuarters(), "RH", played, 60);
+    expect(result.rhythmBreaks).toBe(1);
+    expect(result.lateNoteIds).toEqual(["0-1"]);
   });
 
   it("uses the spec copy and slows the test only on the third consecutive failure", () => {
-    const failed = { pitchErrors: 3, rhythmBreaks: 0, firstWrongLabel: "F4" };
+    const failed = {
+      pitchErrors: 3,
+      rhythmBreaks: 0,
+      firstWrongLabel: "F4",
+      wrongPitchNoteIds: ["a", "b", "c"],
+      lateNoteIds: [],
+    };
     expect(feedbackText(failed, 1, "RH")).toBe(
       "F 还要找一下。它在 E 上面一格，右手四指。再来一条新的。",
     );
-    const passed = { pitchErrors: 1, rhythmBreaks: 0, firstWrongLabel: "D4" };
+    const passed = {
+      pitchErrors: 1,
+      rhythmBreaks: 0,
+      firstWrongLabel: "D4",
+      wrongPitchNoteIds: ["x"],
+      lateNoteIds: [],
+    };
     expect(feedbackText(passed, 1, "RH")).toBe(
       "这些音可以直接认了。接下来的视奏里只会用到它们。",
     );
@@ -71,7 +87,13 @@ describe("compare", () => {
   });
 
   it("sends a passed right-hand-only test to the left-hand lesson", () => {
-    const passed = { pitchErrors: 0, rhythmBreaks: 0, firstWrongLabel: null };
+    const passed = {
+      pitchErrors: 0,
+      rhythmBreaks: 0,
+      firstWrongLabel: null,
+      wrongPitchNoteIds: [],
+      lateNoteIds: [],
+    };
     const profile = applyTestResult(initialProfile(), ["RH"], [passed]);
     expect(profile.l1RightPassed).toBe(true);
     expect(profile.l1LeftPassed).toBe(false);

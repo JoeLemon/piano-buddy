@@ -89,11 +89,15 @@ afterEach(async () => {
   delete (navigator as { requestMIDIAccess?: unknown }).requestMIDIAccess;
 });
 
+function sightProfile(partial: Partial<Profile> = {}): Profile {
+  return { ...initialProfile(), seenSightTips: true, l1RightPassed: true, ...partial };
+}
+
 describe("SightView", () => {
   it("hides the keyboard map and tells the player to keep looking at the staff", () => {
     const wrapper = mount(SightView, {
       props: {
-        profile: { ...initialProfile(), l1RightPassed: true },
+        profile: sightProfile(),
         midiConnected: true,
       },
     });
@@ -102,8 +106,19 @@ describe("SightView", () => {
     expect(wrapper.find("[data-test=rewind]").exists()).toBe(false);
   });
 
+  it("does not start the prepare countdown without MIDI", () => {
+    const wrapper = mount(SightView, {
+      props: {
+        profile: sightProfile(),
+        midiConnected: false,
+      },
+    });
+    expect(wrapper.find("[data-test=countdown]").exists()).toBe(false);
+    expect(wrapper.text()).toContain("连接后才会开始准备");
+  });
+
   it("shows the prepare copy, fingering switch, and a 40–120 tempo slider", async () => {
-    const profile = { ...initialProfile(), l1RightPassed: true };
+    const profile = sightProfile();
     const wrapper = mount(SightView, {
       props: { profile, midiConnected: true },
     });
@@ -134,7 +149,7 @@ describe("SightView", () => {
     const spy = vi.spyOn(audio, "previewScore").mockReturnValue({ stop() {} });
     const wrapper = mount(SightView, {
       props: {
-        profile: { ...initialProfile(), l1RightPassed: true, lastSeed: 3 },
+        profile: sightProfile({ lastSeed: 3 }),
         midiConnected: true,
       },
     });
@@ -153,7 +168,7 @@ describe("SightView", () => {
     const input = new FakeInput();
     installAccess([input]);
     const metronome = vi.spyOn(audio, "startMetronome");
-    const profile = { ...initialProfile(), l1RightPassed: true, lastSeed: 1 };
+    const profile = sightProfile({ lastSeed: 1 });
     const score = generateL1({ hand: "RH", seed: 1, mode: "sight" });
     const notes = sounding(score, "RH");
     const wrapper = mount(SightView, {
@@ -181,7 +196,7 @@ describe("SightView", () => {
     const score = generateL1({ hand: "RH", seed: 1, mode: "sight" });
     const wrapper = mount(SightView, {
       props: {
-        profile: { ...initialProfile(), l1RightPassed: true, lastSeed: 1 },
+        profile: sightProfile({ lastSeed: 1 }),
         midiConnected: true,
       },
     });
@@ -198,12 +213,10 @@ describe("SightView", () => {
   it("does not open a line that has already been started twice", async () => {
     const wrapper = mount(SightView, {
       props: {
-        profile: {
-          ...initialProfile(),
-          l1RightPassed: true,
+        profile: sightProfile({
           lastSeed: 1,
           sightUses: { "l1-RH-1": 2 },
-        },
+        }),
         midiConnected: true,
       },
     });
@@ -220,9 +233,16 @@ describe("ReviewView", () => {
   it("shows one sentence, wrong-note marks, and a new line button", async () => {
     const score = generateL1({ hand: "RH", seed: 2, mode: "sight" });
     const wrongId = sounding(score, "RH")[0].id;
-    const feedback = "这些音可以直接认了。接下来的视奏里只会用到它们。";
+    const feedback = "完成啦！这条读下来了。可以再看一条新的，或者回首页歇一下。";
     const wrapper = mount(ReviewView, {
-      props: { feedback, score, hand: "RH", wrongNoteIds: [wrongId] },
+      props: {
+        feedback,
+        score,
+        hand: "RH",
+        wrongPitchNoteIds: [wrongId],
+        lateNoteIds: [],
+        hasErrorBook: false,
+      },
     });
     expect(wrapper.get("[data-test=feedback]").text()).toBe(feedback);
     expect(wrapper.get("[data-test=next-line]").text()).toBe("再看一条新的");
@@ -302,6 +322,8 @@ describe("App", () => {
       pitchErrors: 3,
       rhythmBreaks: 0,
       firstWrongLabel: notes[2].label,
+      wrongPitchNoteIds: [],
+      lateNoteIds: [],
     }, 1, "RH");
     expect(wrapper.get("[data-test=feedback]").text()).toBe(expected);
     expect(wrapper.text()).not.toContain("%");
@@ -375,6 +397,7 @@ describe("App", () => {
       linesCompleted: 1,
       l1RightPassed: true,
       lastSeed: 4,
+      seenReadingTips: true,
     });
     const wrapper = mount(App);
     await untilText(wrapper, "5 分钟视奏");
@@ -402,6 +425,8 @@ describe("App", () => {
       lessonId: "L1-4",
       l1RightPassed: true,
       lastSeed: 1,
+      seenSightTips: true,
+      seenReadingTips: true,
     });
     vi.useFakeTimers({ toFake: ["setTimeout", "setInterval", "clearTimeout", "clearInterval"] });
     vi.spyOn(audio, "startMetronome").mockReturnValue({ stop() {} });
@@ -422,7 +447,7 @@ describe("App", () => {
     expect(wrapper.find("[data-test=keyboard]").exists()).toBe(false);
     expect(wrapper.find("[data-test=rewind]").exists()).toBe(false);
     expect(wrapper.text()).not.toContain("%");
-    expect(wrapper.text()).not.toContain("识谱");
+    expect(wrapper.find("[data-test=lesson-progress]").exists()).toBe(false);
     let saved = await loadProfile();
     for (let attempt = 0; attempt < 20 && saved.errorSnippets.length === 0; attempt += 1) {
       await vi.advanceTimersByTimeAsync(0);
@@ -459,6 +484,7 @@ describe("App", () => {
       assessment: { knowsTreble: true, knowsBass: false, keepsPulse: true },
       lessonId: "L1-4",
       l1RightPassed: true,
+      seenSightTips: true,
     });
     const first = mount(App);
     await untilText(first, "5 分钟视奏");

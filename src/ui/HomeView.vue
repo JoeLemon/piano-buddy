@@ -1,7 +1,10 @@
 <script setup lang="ts">
 import { computed } from "vue";
+import { homeLessonLabel } from "../domain/lessonProgress";
+import type { Profile } from "../domain/profile";
 
 const props = defineProps<{
+  profile: Profile;
   rightUnlocked: boolean;
   leftUnlocked: boolean;
 }>();
@@ -10,10 +13,15 @@ const emit = defineEmits<{
   "open-reading": [];
   "open-sight": [];
   "open-placement": [];
+  "open-error": [];
 }>();
 
 const bothLocked = computed(() => !props.rightUnlocked && !props.leftUnlocked);
 const bothPassed = computed(() => props.rightUnlocked && props.leftUnlocked);
+const hasErrors = computed(
+  () => props.profile.errorSnippets.length > 0 && (props.rightUnlocked || props.leftUnlocked),
+);
+const lessonLabel = computed(() => homeLessonLabel(props.profile));
 
 function openSight() {
   if (bothLocked.value) {
@@ -25,47 +33,62 @@ function openSight() {
 </script>
 
 <template>
-  <section class="home">
-    <div class="panel">
-      <h1>识谱和视奏</h1>
-      <p class="lead">视奏只用已经认过的音。</p>
-      <button type="button" data-test="reading" @click="emit('open-reading')">先认谱</button>
-      <button type="button" data-test="sight" @click="openSight">5 分钟视奏</button>
-      <p v-if="bothLocked" class="note">先认识这五个音，视奏里只会用到它们。</p>
-      <p v-if="bothPassed" class="note">L1 的音已经通过了。</p>
-      <button type="button" class="quiet" data-test="placement" @click="emit('open-placement')">三道自评</button>
-    </div>
-  </section>
+  <div class="surface" data-test="home-surface">
+    <p class="brand">Piano Buddy</p>
+    <h1>识谱和视奏</h1>
+    <p class="lead">视奏只用已经认过的音。</p>
+    <p class="status" data-test="lesson-status">{{ lessonLabel }}</p>
+    <p class="hands">
+      右手{{ rightUnlocked ? "已解锁" : "未解锁" }} · 左手{{ leftUnlocked ? "已解锁" : "未解锁" }}
+    </p>
+    <button type="button" class="primary" data-test="reading" @click="emit('open-reading')">先认谱</button>
+    <button type="button" data-test="sight" @click="openSight">5 分钟视奏</button>
+    <button
+      v-if="hasErrors"
+      type="button"
+      data-test="error-book"
+      @click="emit('open-error')"
+    >
+      练一条错题
+    </button>
+    <p v-if="bothLocked" class="note">
+      视奏里只会用到已经认过的五个音，先把它们认准。
+    </p>
+    <p v-if="bothPassed" class="note">L1 的音已经通过了。</p>
+    <button type="button" class="quiet" data-test="placement" @click="emit('open-placement')">
+      三道自评
+    </button>
+  </div>
 </template>
 
 <style scoped>
-.home {
-  min-height: 100vh;
-  box-sizing: border-box;
-  background: #faf7f1;
-  color: #1c1c1c;
-  color-scheme: light;
-  font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
-}
-
-.panel {
-  max-width: 24rem;
-  margin: 0 auto;
-  padding: 2rem 1.25rem;
+.brand {
+  margin: 0 0 0.35rem;
+  color: var(--pb-accent);
+  font-family: var(--pb-font-display);
+  font-size: 1.05rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
 }
 
 h1 {
   margin: 0 0 0.5rem;
-  font-size: 1.75rem;
+  font-family: var(--pb-font-display);
+  font-size: 1.85rem;
   font-weight: 600;
-  letter-spacing: 0;
 }
 
 .lead,
-.note {
-  margin: 0 0 1rem;
-  color: #3f3f3f;
-  line-height: 1.5;
+.note,
+.status,
+.hands {
+  margin: 0 0 0.85rem;
+  color: var(--pb-muted);
+}
+
+.status {
+  color: var(--pb-ink);
+  font-weight: 600;
 }
 
 button {
@@ -73,18 +96,23 @@ button {
   width: 100%;
   margin: 0 0 0.75rem;
   padding: 0.85rem 1rem;
-  border: 1px solid #2a2a2a;
-  border-radius: 4px;
-  background: #fff;
-  color: #1c1c1c;
-  font: inherit;
-  font-size: 1rem;
+  border: 1px solid var(--pb-border);
+  border-radius: var(--pb-radius);
+  background: var(--pb-surface);
+  color: var(--pb-ink);
   text-align: left;
   cursor: pointer;
 }
 
-button[data-test="reading"] {
-  background: #f3c84b;
+.primary,
+button[data-test="sight"] {
+  background: var(--pb-surface);
+}
+
+.primary {
+  background: var(--pb-accent);
+  color: var(--pb-accent-text);
+  border-color: var(--pb-accent);
 }
 
 .quiet {
@@ -93,7 +121,7 @@ button[data-test="reading"] {
   padding: 0;
   border: 0;
   background: transparent;
-  color: #3f3f3f;
+  color: var(--pb-muted);
   text-decoration: underline;
   text-underline-offset: 0.2rem;
 }

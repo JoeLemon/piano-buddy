@@ -4,22 +4,41 @@ import { previewScore, startMetronome } from "../audio/preview";
 import { compare, type PlayedNote } from "../domain/compare";
 import { generateL1 } from "../domain/generate";
 import { pitchToMidi } from "../domain/pitch";
-import { canEnterSight, registerSightUse, testBpm, type Profile } from "../domain/profile";
+import {
+  canEnterSight,
+  pruneExhaustedErrorSnippet,
+  registerSightUse,
+  testBpm,
+  type Profile,
+} from "../domain/profile";
 import type { Hand, Score } from "../domain/types";
 import { DURATION_BEATS } from "../domain/vocabulary";
 import { subscribeMidi, type MidiNote } from "../midi/access";
+import { markStaffNotes } from "../notation/markStaff";
 import { renderScore } from "../notation/renderScore";
 
 const PREPARE_SECONDS = 25;
+const SIGHT_TIPS = [
+  "不要弹错就停下来反复重弹。",
+  "每条新谱最多练习 2 遍。",
+  "视奏目标不是弹完美，是持续读谱。",
+];
 
 const props = defineProps<{
   profile: Profile;
   midiConnected: boolean;
+  forcedScore?: Score | null;
 }>();
 
 const emit = defineEmits<{
   "update-profile": [profile: Profile];
-  finished: [payload: { score: Score; result: ReturnType<typeof compare>; hand: Hand; wrongNoteIds: string[] }];
+  finished: [payload: {
+    score: Score;
+    result: ReturnType<typeof compare>;
+    hand: Hand;
+    wrongPitchNoteIds: string[];
+    lateNoteIds: string[];
+  }];
 }>();
 
 const profileState = ref<Profile>({ ...props.profile });
@@ -31,8 +50,10 @@ const preparing = ref(false);
 const showFingers = ref(true);
 const bpm = ref(testBpm(props.profile));
 const staffEl = ref<HTMLElement | null>(null);
+const showTips = ref(!props.profile.seenSightTips);
 
 const bothHands = canEnterSight(props.profile, "RH") && canEnterSight(props.profile, "LH");
+const tempoLocked = () => phase.value !== "prepare";
 
 let prepareTimer: ReturnType<typeof setInterval> | null = null;
 let playTimer: ReturnType<typeof setTimeout> | null = null;
@@ -64,7 +85,22 @@ onBeforeUnmount(() => {
   stopMidi = null;
 });
 
+function dismissTips() {
+  showTips.value = false;
+  if (profileState.value.seenSightTips) return;
+  profileState.value = { ...profileState.value, seenSightTips: true };
+  emit("update-profile", profileState.value);
+}
+
 function openLine() {
+  if (props.forcedScore) {
+    score.value = props.forcedScore;
+    hand.value = props.forcedScore.hands[0] ?? hand.value;
+    cursor = 0;
+    played = [];
+    wrongIds.clear();
+    return;
+  }
   let seed = profileState.value.lastSeed;
   let next = generateL1({ hand: hand.value, seed, mode: "sight" });
   for (let guard = 0; (profileState.value.sightUses[next.id] ?? 0) >= 2 && guard < 30; guard += 1) {
@@ -85,13 +121,14 @@ function syncPrepare() {
   if (phase.value !== "prepare") return;
   if (!props.midiConnected) {
     clearPrepare();
+    secondsLeft.value = PREPARE_SECONDS;
     return;
   }
   startPrepare();
 }
 
 function startPrepare() {
-  if (prepareTimer || phase.value !== "prepare" || !props.midiConnected) return;
+  if (prepareTimer || phase.value !== "prepare" || !props.midiConnected || showTips.value) return;
   secondsLeft.value = PREPARE_SECONDS;
   preparing.value = true;
   prepareTimer = setInterval(() => {
@@ -115,14 +152,22 @@ function beginPlay() {
   preview = null;
   const registration = registerSightUse(profileState.value, score.value.id);
   if (!registration.allowed) {
-    profileState.value = { ...registration.profile, lastSeed: profileState.value.lastSeed + 1 };
+    let next = { ...registration.profile, lastSeed: profileState.value.lastSeed + 1 };
+    next = pruneExhaustedErrorSnippet(next, score.value.id);
+    profileState.value = next;
     emit("update-profile", profileState.value);
+    if (props.forcedScore) {
+      phase.value = "done";
+      return;
+    }
     openLine();
     phase.value = "prepare";
     syncPrepare();
     return;
   }
-  profileState.value = registration.profile;
+  let next = registration.profile;
+  next = pruneExhaustedErrorSnippet(next, score.value.id);
+  profileState.value = next;
   emit("update-profile", profileState.value);
   phase.value = "play";
   cursor = 0;
@@ -148,11 +193,18 @@ function finishPlay() {
     if (!hit || hit.midi !== event.midi) wrongIds.add(event.id);
   });
   paintWrong();
+  const result = compare(score.value, hand.value, played, playBpm);
+  let next = pruneExhaustedErrorSnippet(profileState.value, score.value.id);
+  if (next !== profileState.value) {
+    profileState.value = next;
+    emit("update-profile", next);
+  }
   emit("finished", {
     score: score.value,
-    result: compare(score.value, hand.value, played, playBpm),
+    result,
     hand: hand.value,
-    wrongNoteIds: [...wrongIds],
+    wrongPitchNoteIds: result.wrongPitchNoteIds,
+    lateNoteIds: result.lateNoteIds,
   });
 }
 
@@ -173,13 +225,14 @@ function listen() {
 }
 
 function onBpm(event: Event) {
+  if (tempoLocked()) return;
   const next = Number((event.target as HTMLInputElement).value);
   if (!Number.isFinite(next)) return;
   bpm.value = Math.min(120, Math.max(40, Math.round(next)));
 }
 
 function chooseHand(next: Hand) {
-  if (phase.value !== "prepare" || hand.value === next) return;
+  if (phase.value !== "prepare" || hand.value === next || props.forcedScore) return;
   if (!canEnterSight(profileState.value, next)) return;
   hand.value = next;
   preview?.stop();
@@ -205,7 +258,9 @@ function paintWrong() {
   const el = staffEl.value;
   const current = score.value;
   if (!el || !current) return;
-  markWrongNotes(el, current, hand.value, wrongIds);
+  const colors = new Map<string, string>();
+  for (const id of wrongIds) colors.set(id, "#8a3d12");
+  markStaffNotes(el, current, hand.value, colors);
 }
 
 async function syncMidi(connected: boolean) {
@@ -224,12 +279,16 @@ async function syncMidi(connected: boolean) {
     }
     stopMidi = stop;
   } catch {
-    // The warning stays up through midiConnected.
+    // warning via midiConnected
   }
 }
 
 watch(() => props.midiConnected, (connected) => {
   void syncMidi(connected);
+});
+
+watch(showTips, (open) => {
+  if (!open) syncPrepare();
 });
 
 function cleanupAudio() {
@@ -261,102 +320,131 @@ function lineMs(current: Score, nextHand: Hand, tempo: number): number {
   );
   return Math.round(beats * (60000 / tempo));
 }
-
-function markWrongNotes(element: HTMLElement, current: Score, nextHand: Hand, ids: ReadonlySet<string>) {
-  const groups = Array.from(element.querySelectorAll(".vf-stavenote"));
-  const notes = (current.staves[nextHand]?.measures ?? []).flatMap((measure) => measure.notes);
-  notes.forEach((note, index) => {
-    const group = groups[index];
-    if (!group || !ids.has(note.id)) return;
-    group.setAttribute("data-wrong", "true");
-    const paths = group.querySelectorAll("path");
-    for (let pathIndex = 0; pathIndex < paths.length; pathIndex += 1) {
-      const path = paths.item(pathIndex);
-      if (!path) continue;
-      path.setAttribute("fill", "#8a3d12");
-      path.setAttribute("stroke", "#8a3d12");
-    }
-  });
-}
 </script>
 
 <template>
-  <section
-    class="sight"
+  <div
+    class="surface"
     :data-score-id="score?.id ?? ''"
     data-mode="sight"
     :data-preparing="preparing ? 'true' : 'false'"
   >
-    <div class="panel">
-      <h1>视奏</h1>
-      <p v-if="!midiConnected" class="warn">请连接 MIDI 键盘</p>
-      <p class="remind">眼睛尽量保持看谱，不要盯着键盘</p>
-      <p v-if="phase === 'prepare'" class="card">先不要动手。看看调号、拍号，左右手大概在哪一块，心里数一下节奏。</p>
-      <p v-if="phase === 'prepare'" data-test="countdown" class="count">{{ secondsLeft }}</p>
-      <div v-if="bothHands" class="hands">
-        <button type="button" data-test="hand-rh" :aria-pressed="hand === 'RH' ? 'true' : 'false'" @click="chooseHand('RH')">右手</button>
-        <button type="button" data-test="hand-lh" :aria-pressed="hand === 'LH' ? 'true' : 'false'" @click="chooseHand('LH')">左手</button>
-      </div>
-      <p v-else class="hand">{{ hand === "RH" ? "右手" : "左手" }}</p>
-      <div class="fingers">
-        <button type="button" data-test="show-fingers" :aria-pressed="showFingers ? 'true' : 'false'" @click="showFingers = true">显示指法</button>
-        <button type="button" data-test="hide-fingers" :aria-pressed="showFingers ? 'false' : 'true'" @click="showFingers = false">隐藏指法（自测模式）</button>
-      </div>
-      <label class="tempo">
-        速度
-        <input data-test="bpm" type="range" min="40" max="120" :value="bpm" @input="onBpm" />
-        <span>{{ bpm }}</span>
-      </label>
-      <div ref="staffEl" class="staff"></div>
-      <button v-if="phase === 'prepare'" type="button" data-test="preview" @click="listen">听一遍</button>
+    <div v-if="showTips" class="tips" data-test="sight-tips">
+      <p v-for="tip in SIGHT_TIPS" :key="tip">{{ tip }}</p>
+      <button type="button" class="primary" data-test="dismiss-sight-tips" @click="dismissTips">
+        知道了
+      </button>
     </div>
-  </section>
+    <p v-if="!midiConnected" class="warn" data-test="midi-wait">
+      连接后才会开始准备。用 Chrome 接上 USB 键盘。
+    </p>
+    <p class="remind">眼睛尽量保持看谱，不要盯着键盘</p>
+    <p v-if="phase === 'prepare'" class="card">
+      先不要动手。看看调号、拍号，左右手大概在哪一块，心里数一下节奏。
+    </p>
+    <p
+      v-if="phase === 'prepare' && midiConnected && !showTips"
+      data-test="countdown"
+      class="count"
+    >
+      {{ secondsLeft }}
+    </p>
+    <p v-else-if="phase === 'prepare' && !midiConnected" class="count muted">—</p>
+    <div v-if="bothHands && !forcedScore" class="hands">
+      <button
+        type="button"
+        data-test="hand-rh"
+        :aria-pressed="hand === 'RH' ? 'true' : 'false'"
+        @click="chooseHand('RH')"
+      >
+        右手
+      </button>
+      <button
+        type="button"
+        data-test="hand-lh"
+        :aria-pressed="hand === 'LH' ? 'true' : 'false'"
+        @click="chooseHand('LH')"
+      >
+        左手
+      </button>
+    </div>
+    <p v-else class="hand">{{ hand === "RH" ? "右手" : "左手" }}</p>
+    <div class="fingers">
+      <button
+        type="button"
+        data-test="show-fingers"
+        :aria-pressed="showFingers ? 'true' : 'false'"
+        @click="showFingers = true"
+      >
+        显示指法
+      </button>
+      <button
+        type="button"
+        data-test="hide-fingers"
+        :aria-pressed="showFingers ? 'false' : 'true'"
+        @click="showFingers = false"
+      >
+        隐藏指法（自测模式）
+      </button>
+    </div>
+    <label class="tempo">
+      速度
+      <input
+        data-test="bpm"
+        type="range"
+        min="40"
+        max="120"
+        :value="bpm"
+        :disabled="tempoLocked()"
+        @input="onBpm"
+      />
+      <span>{{ bpm }}</span>
+    </label>
+    <div ref="staffEl" class="staff"></div>
+    <button v-if="phase === 'prepare'" type="button" class="primary" data-test="preview" @click="listen">
+      听一遍
+    </button>
+  </div>
 </template>
 
 <style scoped>
-.sight {
-  min-height: 100vh;
-  box-sizing: border-box;
-  background: #faf7f1;
-  color: #1c1c1c;
-  color-scheme: light;
-  font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
-}
-
-.panel {
-  max-width: 52rem;
-  margin: 0 auto;
-  padding: 2rem 1.25rem;
-}
-
-h1 {
-  margin: 0 0 0.5rem;
-  font-size: 1.75rem;
-  font-weight: 600;
-}
-
 .warn,
 .remind,
 .card,
 .hand,
-.tempo {
-  margin: 0 0 1rem;
+.tempo,
+.tips p {
+  margin: 0 0 0.85rem;
   line-height: 1.5;
 }
 
 .warn {
-  color: #8a3d12;
+  color: var(--pb-warn);
 }
 
 .remind,
 .card,
-.hand {
-  color: #3f3f3f;
+.hand,
+.tips p {
+  color: var(--pb-muted);
 }
 
 .count {
   margin: 0 0 1rem;
-  font-size: 1.5rem;
+  font-family: var(--pb-font-display);
+  font-size: 1.75rem;
+}
+
+.count.muted {
+  color: var(--pb-muted);
+}
+
+.tips {
+  margin: 0 0 1rem;
+  padding: 0.9rem 1rem;
+  border: 1px solid rgb(42 51 68 / 14%);
+  border-radius: var(--pb-radius);
+  background: rgb(232 238 242 / 55%);
 }
 
 .hands,
@@ -366,10 +454,11 @@ h1 {
   flex-wrap: wrap;
   gap: 0.5rem;
   align-items: center;
+  margin-bottom: 0.85rem;
 }
 
 .tempo {
-  color: #3f3f3f;
+  color: var(--pb-muted);
 }
 
 .tempo input {
@@ -379,17 +468,18 @@ h1 {
 
 button {
   padding: 0.55rem 0.9rem;
-  border: 1px solid #2a2a2a;
-  border-radius: 4px;
-  background: #fff;
-  color: #1c1c1c;
-  font: inherit;
+  border: 1px solid var(--pb-border);
+  border-radius: var(--pb-radius);
+  background: var(--pb-surface);
+  color: var(--pb-ink);
   cursor: pointer;
 }
 
 button[aria-pressed="true"],
-button[data-test="preview"] {
-  background: #f3c84b;
+.primary {
+  background: var(--pb-accent);
+  border-color: var(--pb-accent);
+  color: var(--pb-accent-text);
 }
 
 .staff {
@@ -398,7 +488,7 @@ button[data-test="preview"] {
 }
 
 .staff :deep([data-wrong] path) {
-  fill: #8a3d12;
-  stroke: #8a3d12;
+  fill: var(--pb-pitch-mark);
+  stroke: var(--pb-pitch-mark);
 }
 </style>

@@ -32,12 +32,12 @@ const midis = whiteKeyMidis();
   height: 120px;
   box-sizing: border-box;
   background: #fff;
-  border: 1px solid #2a2a2a;
+  border: 1px solid var(--pb-border);
   border-radius: 0 0 4px 4px;
   box-shadow: inset 0 -2px 0 rgb(0 0 0 / 12%);
 }
 
 .white-key.is-target {
-  background: #f3c84b;
+  background: var(--pb-accent);
 }
 </style>

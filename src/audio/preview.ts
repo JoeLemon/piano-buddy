@@ -95,6 +95,7 @@ export function previewScore(score: Score, hand: Hand, bpm: number): Playback {
   const secondsPerBeat = 60 / bpm;
   const origin = ctx.currentTime + 0.05;
   let beat = 0;
+  let endAt = origin;
 
   for (const measure of stave?.measures ?? []) {
     for (const note of measure.notes) {
@@ -103,6 +104,7 @@ export function previewScore(score: Score, hand: Hand, bpm: number): Playback {
       if (sounding) {
         const when = origin + beat * secondsPerBeat;
         const duration = Math.max(0.03, beats * secondsPerBeat * 0.92);
+        endAt = Math.max(endAt, when + duration);
         for (const pitch of note.pitches) {
           nodes.push(tone(ctx, midiToHz(pitchToMidi(pitch)), when, duration));
         }
@@ -112,10 +114,17 @@ export function previewScore(score: Score, hand: Hand, bpm: number): Playback {
   }
 
   let stopped = false;
+  const autoClose = setTimeout(() => {
+    if (stopped) return;
+    stopped = true;
+    halt(nodes, ctx);
+  }, Math.max(50, Math.round((endAt - ctx.currentTime) * 1000) + 40));
+
   return {
     stop() {
       if (stopped) return;
       stopped = true;
+      clearTimeout(autoClose);
       halt(nodes, ctx);
     },
   };
@@ -133,6 +142,7 @@ export function startMetronome(bpm: number): Playback {
   const nodes: OscillatorNode[] = [];
   const secondsPerBeat = 60 / bpm;
   let next = ctx.currentTime + 0.05;
+  let beatIndex = 0;
   let stopped = false;
 
   const scheduleAhead = () => {
@@ -141,10 +151,13 @@ export function startMetronome(bpm: number): Playback {
     while (next < horizon) {
       if (next < ctx.currentTime) {
         next += secondsPerBeat;
+        beatIndex += 1;
         continue;
       }
-      nodes.push(tone(ctx, 880, next, 0.04));
+      const frequency = beatIndex % 4 === 0 ? 880 : 660;
+      nodes.push(tone(ctx, frequency, next, 0.03));
       next += secondsPerBeat;
+      beatIndex += 1;
     }
   };
 

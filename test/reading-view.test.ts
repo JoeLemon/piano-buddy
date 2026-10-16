@@ -44,12 +44,14 @@ describe("ReadingView", () => {
   it("shows the keyboard map and does not advance without MIDI", async () => {
     const wrapper = mount(ReadingView, {
       props: {
-        profile: { ...initialProfile(), lessonId: "L1-2" },
+        profile: { ...initialProfile(), lessonId: "L1-2", seenReadingTips: true },
         midiConnected: false,
       },
     });
     expect(wrapper.text()).toContain("请连接 MIDI 键盘");
     expect(wrapper.find("[data-test=keyboard]").exists()).toBe(true);
+    expect(wrapper.find("[data-test=lesson-progress]").exists()).toBe(true);
+    expect(wrapper.get("[data-test=lesson-goal]").text()).toBe("找键 0/8");
     expect(wrapper.emitted("update-profile")).toBeFalsy();
   });
 
@@ -64,6 +66,7 @@ describe("ReadingView", () => {
           lessonPhase: "notes",
           findCorrect: 6,
           weakPitchQueue: ["D4", "G4"],
+          seenReadingTips: true,
         },
         midiConnected: true,
       },

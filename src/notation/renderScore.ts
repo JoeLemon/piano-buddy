@@ -1,4 +1,4 @@
-import { Factory, Renderer, type StemmableNote } from "vexflow";
+import { Factory, Renderer, Voice, type StemmableNote } from "vexflow";
 import { pitchLabel, pitchToMidi } from "../domain/pitch";
 import type { Clef, Duration, Hand, Measure, NoteEvent, Score, Step } from "../domain/types";
 
@@ -92,6 +92,86 @@ export function renderScore(element: HTMLElement, score: Score, hand: Hand, show
 
   factory.draw();
   styleFingerAnnotations(host);
+}
+
+/** Treble on top, bass below. `score.hands` must include both RH and LH. */
+export function renderGrandScore(element: HTMLElement, score: Score, showFingers: boolean): void {
+  if (!score.hands.includes("RH") || !score.hands.includes("LH")) {
+    throw new Error("renderGrandScore requires RH and LH");
+  }
+  const right = score.staves.RH;
+  const left = score.staves.LH;
+  if (!right || !left) {
+    throw new Error("renderGrandScore requires RH and LH staves");
+  }
+
+  element.replaceChildren();
+  const measureCount = Math.min(right.measures.length, left.measures.length);
+  if (measureCount === 0) return;
+
+  const host = document.createElement("div");
+  element.append(host);
+
+  const gap = 12;
+  let cursor = 28;
+  const placements = Array.from({ length: measureCount }, (_, index) => {
+    const width = index === 0 ? 360 : 240;
+    const placement = { x: cursor, width };
+    cursor += width + gap;
+    return placement;
+  });
+
+  const width = cursor + 10;
+  const height = 420;
+  const factory = new Factory({
+    renderer: { elementId: null, width, height },
+  });
+  factory.setContext(Renderer.buildContext(host, Renderer.Backends.SVG, width, height));
+
+  const time = `${score.meter.beats}/${score.meter.beatValue}`;
+  const easy = factory.EasyScore();
+  easy.set({ time });
+
+  for (let index = 0; index < measureCount; index += 1) {
+    const rightMeasure = right.measures[index];
+    const leftMeasure = left.measures[index];
+    const rightLine = rightMeasure.notes.map((note) => noteToken(note, right.clef)).join(", ");
+    const leftLine = leftMeasure.notes.map((note) => noteToken(note, left.clef)).join(", ");
+    if (!rightLine || !leftLine) continue;
+
+    const rightNotes = easy.notes(rightLine, { clef: right.clef });
+    const leftNotes = easy.notes(leftLine, { clef: left.clef });
+    if (showFingers) {
+      addFingers(factory, rightNotes, rightMeasure);
+      addFingers(factory, leftNotes, leftMeasure);
+    }
+
+    const placement = placements[index];
+    const system = factory.System({
+      x: placement.x,
+      y: 48,
+      width: placement.width,
+      spaceBetweenStaves: 16,
+    });
+    const treble = system.addStave({ voices: [openVoice(factory, rightNotes, time)] });
+    const bass = system.addStave({ voices: [openVoice(factory, leftNotes, time)] });
+    if (index === 0) {
+      treble.addClef(right.clef).addTimeSignature(time).addKeySignature(score.keySignature);
+      bass.addClef(left.clef).addTimeSignature(time).addKeySignature(score.keySignature);
+    }
+    system.addConnector("brace");
+    system.addConnector("singleLeft");
+  }
+
+  factory.draw();
+  styleFingerAnnotations(host);
+}
+
+function openVoice(factory: Factory, notes: StemmableNote[], time: string) {
+  const voice = factory.Voice({ time });
+  // A lesson bar may be shorter than the meter. FULL still rejects notes that run past the bar.
+  voice.setMode(Voice.Mode.FULL);
+  return voice.addTickables(notes);
 }
 
 function addFingers(factory: Factory, notes: StemmableNote[], measure: Measure): void {

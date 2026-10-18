@@ -1,4 +1,5 @@
 :root {
+  color-scheme: light;
   --pb-bg: #e8eef2;
   --pb-surface: #ffffff;
   --pb-ink: #1a2332;
@@ -8,11 +9,57 @@
   --pb-warn: #8a3d12;
   --pb-pitch-mark: #8a3d12;
   --pb-late-mark: #1f5f8b;
+  --pb-ok: #1f7a4d;
+  --pb-ok-bg: rgb(31 122 77 / 12%);
+  --pb-danger: #b3333a;
   --pb-border: #2a3344;
+  --pb-key-white: #ffffff;
+  --pb-key-black: #1a2332;
+  --pb-tip-bg: rgb(232 238 242 / 55%);
+  --pb-border-soft: rgb(42 51 68 / 14%);
+  /* 双手指法示意图：肤色手形，与琴键拉开对比 */
+  --pb-hand: #f4ddc2;
+  --pb-hand-line: #c9a87c;
+  --pb-hand-ink: #6b4f2e;
+  /* 乐谱进度配色：弹过的区域 / 弹对的音 / 弹错的音 / 正在听或正在弹的音 */
+  --pb-score-played: #dce8d5; /* 浅豆沙绿 */
+  --pb-score-correct: #9dc483; /* 豆蔻绿 */
+  --pb-score-wrong: #e2b13c; /* 锗黄 */
+  --pb-score-active: #c9842a; /* 强调色：跟随中的当前音 */
   --pb-font-display: "Source Serif 4", "Songti SC", "Noto Serif SC", serif;
   --pb-font-body: "IBM Plex Sans", "PingFang SC", "Microsoft YaHei", sans-serif;
   --pb-radius: 6px;
   --pb-shadow: 0 1px 0 rgb(26 35 50 / 6%), 0 8px 24px rgb(26 35 50 / 6%);
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --pb-bg: #10151b;
+  --pb-surface: #1a222c;
+  --pb-ink: #e8edf2;
+  --pb-muted: #9aa6b4;
+  --pb-accent: #d99a4a;
+  --pb-accent-text: #1a1a1a;
+  --pb-warn: #e6a56f;
+  --pb-pitch-mark: #e6a56f;
+  --pb-late-mark: #6fa8d8;
+  --pb-ok: #5fb98a;
+  --pb-ok-bg: rgb(95 185 138 / 14%);
+  --pb-danger: #e07a7a;
+  --pb-border: #8a97a5;
+  --pb-key-white: #ccd4dc;
+  --pb-key-black: #0c1117;
+  --pb-tip-bg: rgb(15 21 28 / 75%);
+  --pb-border-soft: rgb(255 255 255 / 10%);
+  --pb-hand: #5b4633;
+  --pb-hand-line: #96765a;
+  --pb-hand-ink: #f0e3d0;
+  /* 深色下同名的三色，稍降饱和避免刺眼 */
+  --pb-score-played: #44544a;
+  --pb-score-correct: #8fbf74;
+  --pb-score-wrong: #d9a332;
+  --pb-score-active: #d99a4a;
+  --pb-shadow: 0 1px 0 rgb(0 0 0 / 40%), 0 8px 24px rgb(0 0 0 / 40%);
 }
 
 *,
@@ -31,12 +78,36 @@ body,
 body {
   background: var(--pb-bg);
   color: var(--pb-ink);
-  color-scheme: light;
   font-family: var(--pb-font-body);
   line-height: 1.5;
+}
+
+/* 基础自适应：字体随视口在 14–17.5px 间浮动，小屏不至于过大 */
+html {
+  font-size: clamp(14px, 0.45vw + 13.4px, 17.5px);
 }
 
 button,
 input {
   font: inherit;
+}
+
+/* 全局交互反馈：`:where()` 让优先级归零，只做增量反馈，不覆盖各组件的
+   scoped 背景色。 */
+:where(button, [role="button"]):hover:not(:disabled) {
+  filter: brightness(0.96);
+}
+
+:where(button, [role="button"]):active:not(:disabled) {
+  filter: brightness(0.9);
+}
+
+:where(button, input, summary):focus-visible {
+  outline: 2px solid var(--pb-accent);
+  outline-offset: 2px;
+}
+
+:where(button):disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
 }

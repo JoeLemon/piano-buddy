@@ -1,19 +1,51 @@
-export type MidiNote = {
-  midi: number;
-  timeMs: number;
-  kind: "on" | "off";
-};
+import { attachBleListener } from "./ble";
+import { attachKeyboardListener } from "./keyboard";
+import type { MidiNote } from "./types";
 
+export type { MidiNote } from "./types";
+export {
+  connectBleMidi,
+  disconnectBleMidi,
+  isBleSupported,
+  subscribeBleState,
+  bleDeviceName,
+} from "./ble";
+export {
+  MIDI_TO_KEY,
+  keyCapFor,
+  keyboardMode,
+  setKeyboardMode,
+  toggleKeyboardMode,
+} from "./keyboard";
+
+/**
+ * Subscribes to incoming note events from every connected MIDI source.
+ *
+ * The Web MIDI API (navigator.requestMIDIAccess) covers USB and BLE MIDI on
+ * desktop Chrome/Edge. Where that API is missing (iOS Safari, Android Chrome),
+ * the subscription silently falls back to Bluetooth-only delivery via the BLE
+ * session managed in `ble.ts`. In simulation mode the computer keyboard is
+ * treated as one more note source.
+ */
 export async function subscribeMidi(onNote: (note: MidiNote) => void): Promise<() => void> {
+  const detachBle = attachBleListener(onNote);
+  const detachKeyboard = attachKeyboardListener(onNote);
+
   if (typeof navigator === "undefined" || typeof navigator.requestMIDIAccess !== "function") {
-    throw new Error("midi-unavailable");
+    return () => {
+      detachBle();
+      detachKeyboard();
+    };
   }
 
   let access: MIDIAccess;
   try {
     access = await navigator.requestMIDIAccess();
   } catch {
-    throw new Error("midi-unavailable");
+    return () => {
+      detachBle();
+      detachKeyboard();
+    };
   }
 
   const listened = new Set<MIDIInput>();
@@ -49,6 +81,8 @@ export async function subscribeMidi(onNote: (note: MidiNote) => void): Promise<(
   } catch (error) {
     for (const input of listened) input.removeEventListener("midimessage", onMessage);
     listened.clear();
+    detachBle();
+    detachKeyboard();
     throw error;
   }
 
@@ -62,5 +96,7 @@ export async function subscribeMidi(onNote: (note: MidiNote) => void): Promise<(
     access.removeEventListener("statechange", onState);
     for (const input of listened) input.removeEventListener("midimessage", onMessage);
     listened.clear();
+    detachBle();
+    detachKeyboard();
   };
 }

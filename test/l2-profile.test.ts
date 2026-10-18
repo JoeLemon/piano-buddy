@@ -137,8 +137,8 @@ describe("L2 lesson progress copy", () => {
     expect(lessonStepLabel("L2-1")).toBe("八分音符");
 
     const find = { ...initialProfile(), lessonId: "L2-4" as Profile["lessonId"], findCorrect: 3 };
-    expect(lessonGoalText(find)).toBe("找键 3/8");
-    expect(lessonGoalText({ ...find, lessonId: "L2-5", findCorrect: 0 })).toBe("找键 0/8");
+    expect(lessonGoalText(find)).toBe("找键 3/16");
+    expect(lessonGoalText({ ...find, lessonId: "L2-5", findCorrect: 0 })).toBe("找键 0/16");
     expect(lessonStepLabel("L2-4")).toBe("F 五指");
     expect(lessonStepLabel("L2-5")).toBe("G 五指");
     expect(lessonStepLabel("L2-6")).toBe("五指平移");

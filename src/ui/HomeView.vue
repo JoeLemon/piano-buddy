@@ -54,7 +54,12 @@ function openSight() {
     <p v-if="bothLocked" class="note">
       视奏里只会用到已经认过的五个音，先把它们认准。
     </p>
-    <p v-if="bothPassed" class="note">L1 的音已经通过了。</p>
+    <p v-if="bothPassed && !profile.l2Passed" class="note">
+      L1 的音已经通过了。接下来是 L2：八分音符、双手，还有 F 调和 G 调。
+    </p>
+    <p v-if="profile.l2Passed" class="note" data-test="l2-done">
+      L2 也过了。视奏现在是双手的。
+    </p>
     <button type="button" class="quiet" data-test="placement" @click="emit('open-placement')">
       三道自评
     </button>
@@ -107,6 +112,7 @@ button {
 .primary,
 button[data-test="sight"] {
   background: var(--pb-surface);
+  font-weight: 600;
 }
 
 .primary {

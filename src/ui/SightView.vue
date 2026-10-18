@@ -1,21 +1,35 @@
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, ref, watch } from "vue";
-import { previewScore, startMetronome } from "../audio/preview";
+import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { audioAvailable, previewScore, startMetronome } from "../audio/preview";
 import { compare, type PlayedNote } from "../domain/compare";
 import { generateL1 } from "../domain/generate";
+import { generateL2 } from "../domain/generateL2";
 import { pitchToMidi } from "../domain/pitch";
 import {
   canEnterSight,
+  canEnterSightLevel,
   pruneExhaustedErrorSnippet,
   registerSightUse,
-  testBpm,
+  testBpmForLevel,
   type Profile,
 } from "../domain/profile";
+import { flattenScore } from "../domain/timeline";
 import type { Hand, Score } from "../domain/types";
 import { DURATION_BEATS } from "../domain/vocabulary";
 import { subscribeMidi, type MidiNote } from "../midi/access";
-import { markStaffNotes } from "../notation/markStaff";
-import { renderScore } from "../notation/renderScore";
+import {
+  grandProgressRatio,
+  measureForSounding,
+  measureForTimeline,
+  paintGrandProgress,
+  paintScoreProgress,
+  scrollGrandToCursor,
+  scrollScoreToCursor,
+  scrollScoreToNote,
+  scoreProgressRatio,
+} from "../notation/scorePaint";
+import { renderGrandScore, renderScore } from "../notation/renderScore";
+import ScoreProgress from "./ScoreProgress.vue";
 
 const PREPARE_SECONDS = 25;
 const SIGHT_TIPS = [
@@ -30,12 +44,15 @@ const props = defineProps<{
   forcedScore?: Score | null;
 }>();
 
+type SightTarget = { key: string; midi: number };
+
 const emit = defineEmits<{
   "update-profile": [profile: Profile];
+  "connect-midi": [];
   finished: [payload: {
     score: Score;
     result: ReturnType<typeof compare>;
-    hand: Hand;
+    hand: Hand | "BOTH";
     wrongPitchNoteIds: string[];
     lateNoteIds: string[];
   }];
@@ -48,11 +65,19 @@ const phase = ref<"prepare" | "play" | "done">("prepare");
 const secondsLeft = ref(PREPARE_SECONDS);
 const preparing = ref(false);
 const showFingers = ref(true);
-const bpm = ref(testBpm(props.profile));
+/** L2 视奏是双手大谱表；其余都是单手。 */
+const grand = computed(() => score.value?.hands.length === 2);
+const level = computed<1 | 2>(() => (canEnterSightLevel(profileState.value, 2) ? 2 : 1));
+const bpm = ref(testBpmForLevel(props.profile, canEnterSightLevel(props.profile, 2) ? 2 : 1));
 const staffEl = ref<HTMLElement | null>(null);
 const showTips = ref(!props.profile.seenSightTips);
 
 const bothHands = canEnterSight(props.profile, "RH") && canEnterSight(props.profile, "LH");
+const handChooser = computed(() => bothHands && !props.forcedScore && !grand.value);
+const handLabel = computed(() => {
+  if (grand.value) return "双手";
+  return hand.value === "RH" ? "右手" : "左手";
+});
 const tempoLocked = () => phase.value !== "prepare";
 
 let prepareTimer: ReturnType<typeof setInterval> | null = null;
@@ -62,11 +87,54 @@ let metronome: { stop: () => void } | null = null;
 let stopMidi: (() => void) | null = null;
 let midiToken = 0;
 let alive = true;
-let cursor = 0;
+const playCursor = ref(0);
+/** 「听一遍」跟随时的当前发声音序号；没有在预览时为 null。 */
+const previewIndex = ref<number | null>(null);
+/** 打开这条时还能练几遍（消耗式题库，最多 2 遍）。 */
+const remainingPlays = ref(2);
 let playStartedAt = 0;
 let playBpm = bpm.value;
 let played: PlayedNote[] = [];
 const wrongIds = new Set<string>();
+const correctIds = new Set<string>();
+const noIds: ReadonlySet<string> = new Set<string>();
+
+const paintIndex = computed(() =>
+  previewIndex.value == null ? playCursor.value : previewIndex.value,
+);
+
+/** 待弹音序列。L2 双手按 flattenScore 顺序，键带手；L1 键就是音符 id。 */
+const targets = computed<SightTarget[]>(() => (score.value ? targetsFor(score.value) : []));
+
+const displayProgress = computed(() => {
+  const current = score.value;
+  if (!current) return 0;
+  const count = previewIndex.value == null ? playCursor.value : previewIndex.value + 1;
+  return grand.value
+    ? grandProgressRatio(current, count)
+    : scoreProgressRatio(current, hand.value, count);
+});
+
+const measureCount = computed(() => {
+  const current = score.value;
+  if (!current) return 0;
+  return grand.value
+    ? Math.max(current.staves.RH?.measures.length ?? 0, current.staves.LH?.measures.length ?? 0)
+    : current.staves[hand.value]?.measures.length ?? 0;
+});
+
+const measureLabel = computed(() => {
+  const current = score.value;
+  if (!current) return "";
+  const { current: index, total } = grand.value
+    ? measureForTimeline(current, paintIndex.value)
+    : measureForSounding(current, hand.value, paintIndex.value);
+  return `第 ${index}/${total} 小节`;
+});
+
+const preparePercent = computed(() =>
+  Math.round(((PREPARE_SECONDS - secondsLeft.value) / PREPARE_SECONDS) * 100),
+);
 
 watch([score, staffEl, hand, showFingers], drawStaff, { flush: "post" });
 watch(() => props.midiConnected, syncPrepare);
@@ -96,24 +164,62 @@ function openLine() {
   if (props.forcedScore) {
     score.value = props.forcedScore;
     hand.value = props.forcedScore.hands[0] ?? hand.value;
-    cursor = 0;
-    played = [];
-    wrongIds.clear();
+    applyDefaultBpm(props.forcedScore);
+    resetProgress();
+    syncRemainingPlays();
     return;
   }
   let seed = profileState.value.lastSeed;
-  let next = generateL1({ hand: hand.value, seed, mode: "sight" });
+  let next = nextLine(seed);
   for (let guard = 0; (profileState.value.sightUses[next.id] ?? 0) >= 2 && guard < 30; guard += 1) {
     seed += 1;
-    next = generateL1({ hand: hand.value, seed, mode: "sight" });
+    next = nextLine(seed);
   }
   score.value = next;
-  cursor = 0;
-  played = [];
-  wrongIds.clear();
+  applyDefaultBpm(next);
+  resetProgress();
+  syncRemainingPlays();
   if (seed !== profileState.value.lastSeed) {
     profileState.value = { ...profileState.value, lastSeed: seed };
     emit("update-profile", profileState.value);
+  }
+}
+
+/** L2 通过后默认双手大谱表；否则还是单手 L1 视奏。 */
+function nextLine(seed: number): Score {
+  if (level.value === 2) {
+    return generateL2({ seed, mode: "sight", shape: { kind: "sight" } });
+  }
+  return generateL1({ hand: hand.value, seed, mode: "sight" });
+}
+
+/** 换手位/换难度时回到该档默认速度；同一档内保留玩家自己调的速度。 */
+function applyDefaultBpm(next: Score) {
+  const nextLevel: 1 | 2 = next.level === 2 ? 2 : 1;
+  if (score.value && score.value.level === next.level) return;
+  bpm.value = testBpmForLevel(profileState.value, nextLevel);
+}
+
+/** 这条最多练 2 遍；打开时把「还能练几遍」记下来，供准备阶段显示。 */
+function syncRemainingPlays() {
+  const current = score.value;
+  if (!current) {
+    remainingPlays.value = 0;
+    return;
+  }
+  remainingPlays.value = Math.max(0, 2 - (profileState.value.sightUses[current.id] ?? 0));
+}
+
+function resetProgress() {
+  playCursor.value = 0;
+  previewIndex.value = null;
+  played = [];
+  wrongIds.clear();
+  correctIds.clear();
+  const el = staffEl.value;
+  if (el) {
+    el.scrollLeft = 0;
+    paintProgress();
   }
 }
 
@@ -150,6 +256,7 @@ function beginPlay() {
   clearPrepare();
   preview?.stop();
   preview = null;
+  previewIndex.value = null;
   const registration = registerSightUse(profileState.value, score.value.id);
   if (!registration.allowed) {
     let next = { ...registration.profile, lastSeed: profileState.value.lastSeed + 1 };
@@ -170,14 +277,12 @@ function beginPlay() {
   profileState.value = next;
   emit("update-profile", profileState.value);
   phase.value = "play";
-  cursor = 0;
-  played = [];
-  wrongIds.clear();
+  resetProgress();
   playStartedAt = performance.now();
   playBpm = bpm.value;
   metronome?.stop();
   metronome = startMetronome(playBpm);
-  playTimer = setTimeout(() => finishPlay(), lineMs(score.value, hand.value, playBpm));
+  playTimer = setTimeout(() => finishPlay(), lineMs(score.value, playBpm));
 }
 
 function finishPlay() {
@@ -187,13 +292,13 @@ function finishPlay() {
   playTimer = null;
   metronome?.stop();
   metronome = null;
-  const events = soundingEvents(score.value, hand.value);
-  events.forEach((event, index) => {
+  targets.value.forEach((target, index) => {
     const hit = played[index];
-    if (!hit || hit.midi !== event.midi) wrongIds.add(event.id);
+    if (!hit || hit.midi !== target.midi) wrongIds.add(target.key);
   });
-  paintWrong();
-  const result = compare(score.value, hand.value, played, playBpm);
+  paintProgress();
+  const handValue: Hand | "BOTH" = grand.value ? "BOTH" : hand.value;
+  const result = compare(score.value, handValue, played, playBpm);
   let next = pruneExhaustedErrorSnippet(profileState.value, score.value.id);
   if (next !== profileState.value) {
     profileState.value = next;
@@ -202,7 +307,7 @@ function finishPlay() {
   emit("finished", {
     score: score.value,
     result,
-    hand: hand.value,
+    hand: handValue,
     wrongPitchNoteIds: result.wrongPitchNoteIds,
     lateNoteIds: result.lateNoteIds,
   });
@@ -210,18 +315,76 @@ function finishPlay() {
 
 function onNote(note: MidiNote) {
   if (!props.midiConnected || note.kind !== "on" || phase.value !== "play" || !score.value) return;
-  const event = soundingEvents(score.value, hand.value)[cursor];
-  if (!event) return;
+  const target = targets.value[playCursor.value];
+  if (!target) return;
   played.push({ midi: note.midi, timeMs: note.timeMs - playStartedAt });
-  if (note.midi !== event.midi) wrongIds.add(event.id);
-  cursor += 1;
-  paintWrong();
+  if (note.midi !== target.midi) wrongIds.add(target.key);
+  else correctIds.add(target.key);
+  playCursor.value += 1;
+  paintProgress();
+  scrollToCursor();
 }
 
+function paintProgress() {
+  const el = staffEl.value;
+  const current = score.value;
+  if (!el || !current) return;
+  const previewing = previewIndex.value != null;
+  if (grand.value) {
+    paintGrandProgress(el, current, {
+      timelineCount: previewing ? previewIndex.value! + 1 : playCursor.value,
+      correctKeys: previewing ? noIds : correctIds,
+      wrongKeys: previewing ? noIds : wrongIds,
+      activeKey: previewing ? targets.value[previewIndex.value!]?.key ?? null : null,
+    });
+    return;
+  }
+  const activeId = previewing ? targets.value[previewIndex.value!]?.key ?? null : null;
+  paintScoreProgress(el, current, hand.value, {
+    playedCount: previewing ? previewIndex.value! + 1 : playCursor.value,
+    correctIds: previewing ? noIds : correctIds,
+    wrongIds: previewing ? noIds : wrongIds,
+    activeId,
+  });
+}
+
+function scrollToCursor() {
+  const el = staffEl.value;
+  const current = score.value;
+  if (!el || !current) return;
+  if (grand.value) {
+    scrollGrandToCursor(el, current, playCursor.value);
+    return;
+  }
+  scrollScoreToCursor(el, current, hand.value, playCursor.value);
+}
+
+/** 「听一遍」：跟着播放把进度条和谱面游标一起往前走。 */
 function listen() {
   if (phase.value !== "prepare" || !score.value) return;
   preview?.stop();
-  preview = previewScore(score.value, hand.value, bpm.value);
+  preview = null;
+  const current = score.value;
+  const nextHand: Hand | "BOTH" = grand.value ? "BOTH" : hand.value;
+  const playable = audioAvailable();
+  previewIndex.value = playable ? 0 : null;
+  paintProgress();
+  preview = previewScore(current, nextHand, bpm.value, {
+    onNote: (index) => {
+      if (!alive || phase.value !== "prepare") return;
+      previewIndex.value = index;
+      paintProgress();
+      const el = staffEl.value;
+      if (!el) return;
+      if (grand.value) scrollGrandToCursor(el, current, index);
+      else scrollScoreToNote(el, current, nextHand as Hand, index);
+    },
+    onEnd: () => {
+      if (!alive) return;
+      previewIndex.value = null;
+      paintProgress();
+    },
+  });
 }
 
 function onBpm(event: Event) {
@@ -250,17 +413,9 @@ function drawStaff() {
     el.replaceChildren();
     return;
   }
-  renderScore(el, current, hand.value, showFingers.value);
-  paintWrong();
-}
-
-function paintWrong() {
-  const el = staffEl.value;
-  const current = score.value;
-  if (!el || !current) return;
-  const colors = new Map<string, string>();
-  for (const id of wrongIds) colors.set(id, "#8a3d12");
-  markStaffNotes(el, current, hand.value, colors);
+  if (current.hands.length === 2) renderGrandScore(el, current, showFingers.value);
+  else renderScore(el, current, hand.value, showFingers.value);
+  paintProgress();
 }
 
 async function syncMidi(connected: boolean) {
@@ -301,22 +456,34 @@ function cleanupAudio() {
   metronome = null;
 }
 
-function soundingEvents(current: Score, nextHand: Hand): { id: string; midi: number }[] {
-  const events: { id: string; midi: number }[] = [];
+function targetsFor(current: Score): SightTarget[] {
+  if (current.hands.length === 2) {
+    return flattenScore(current).map((note) => ({ key: `${note.hand}:${note.id}`, midi: note.midi }));
+  }
+  return soundingEvents(current, hand.value);
+}
+
+function soundingEvents(current: Score, nextHand: Hand): SightTarget[] {
+  const events: SightTarget[] = [];
   for (const measure of current.staves[nextHand]?.measures ?? []) {
     for (const note of measure.notes) {
       if (note.duration.endsWith("r") || note.pitches.length === 0) continue;
       const pitch = note.pitches[0];
-      events.push({ id: note.id, midi: pitchToMidi(pitch) });
+      events.push({ key: note.id, midi: pitchToMidi(pitch) });
     }
   }
   return events;
 }
 
-function lineMs(current: Score, nextHand: Hand, tempo: number): number {
-  const beats = (current.staves[nextHand]?.measures ?? []).reduce(
-    (sum, measure) => sum + measure.notes.reduce((inner, note) => inner + DURATION_BEATS[note.duration], 0),
-    0,
+function lineMs(current: Score, tempo: number): number {
+  const hands: readonly Hand[] = current.hands.length === 2 ? ["RH", "LH"] : [hand.value];
+  const beats = Math.max(
+    ...hands.map((next) =>
+      (current.staves[next]?.measures ?? []).reduce(
+        (sum, measure) => sum + measure.notes.reduce((inner, note) => inner + DURATION_BEATS[note.duration], 0),
+        0,
+      ),
+    ),
   );
   return Math.round(beats * (60000 / tempo));
 }
@@ -335,9 +502,12 @@ function lineMs(current: Score, nextHand: Hand, tempo: number): number {
         知道了
       </button>
     </div>
-    <p v-if="!midiConnected" class="warn" data-test="midi-wait">
-      连接后才会开始准备。用 Chrome 接上 USB 键盘。
-    </p>
+    <div v-if="!midiConnected" class="connect-prompt">
+      <p class="warn" data-test="midi-wait">连接后才会开始准备。请先连接蓝牙或 USB MIDI 键盘。</p>
+      <button type="button" class="connect" data-test="connect-midi" @click="emit('connect-midi')">
+        连接 MIDI 键盘
+      </button>
+    </div>
     <p class="remind">眼睛尽量保持看谱，不要盯着键盘</p>
     <p v-if="phase === 'prepare'" class="card">
       先不要动手。看看调号、拍号，左右手大概在哪一块，心里数一下节奏。
@@ -349,8 +519,22 @@ function lineMs(current: Score, nextHand: Hand, tempo: number): number {
     >
       {{ secondsLeft }}
     </p>
-    <p v-else-if="phase === 'prepare' && !midiConnected" class="count muted">—</p>
-    <div v-if="bothHands && !forcedScore" class="hands">
+    <div
+      v-if="phase === 'prepare' && midiConnected && !showTips"
+      class="prepare-bar"
+      data-test="prepare-progress"
+      role="progressbar"
+      :aria-valuenow="preparePercent"
+      aria-valuemin="0"
+      aria-valuemax="100"
+    >
+      <div class="prepare-fill" :style="{ width: `${preparePercent}%` }"></div>
+    </div>
+    <p v-if="phase === 'prepare' && !midiConnected" class="count muted">—</p>
+    <p v-if="phase === 'prepare' && score" class="remaining" data-test="sight-remaining">
+      这条还能练 {{ remainingPlays }} 遍
+    </p>
+    <div v-if="handChooser" class="hands">
       <button
         type="button"
         data-test="hand-rh"
@@ -368,7 +552,7 @@ function lineMs(current: Score, nextHand: Hand, tempo: number): number {
         左手
       </button>
     </div>
-    <p v-else class="hand">{{ hand === "RH" ? "右手" : "左手" }}</p>
+    <p v-else class="hand" data-test="sight-hand">{{ handLabel }}</p>
     <div class="fingers">
       <button
         type="button"
@@ -401,6 +585,12 @@ function lineMs(current: Score, nextHand: Hand, tempo: number): number {
       <span>{{ bpm }}</span>
     </label>
     <div ref="staffEl" class="staff"></div>
+    <ScoreProgress
+      v-if="score"
+      :value="displayProgress"
+      :label="measureLabel"
+      :measures="measureCount"
+    />
     <button v-if="phase === 'prepare'" type="button" class="primary" data-test="preview" @click="listen">
       听一遍
     </button>
@@ -439,12 +629,33 @@ function lineMs(current: Score, nextHand: Hand, tempo: number): number {
   color: var(--pb-muted);
 }
 
+.prepare-bar {
+  height: 0.3rem;
+  margin: -0.4rem 0 0.85rem;
+  border-radius: 999px;
+  background: var(--pb-scrollbar-track, rgb(42 51 68 / 12%));
+  overflow: hidden;
+}
+
+.prepare-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: var(--pb-accent);
+  transition: width 1s linear;
+}
+
+.remaining {
+  margin: 0 0 0.85rem;
+  color: var(--pb-muted);
+  font-size: 0.9rem;
+}
+
 .tips {
   margin: 0 0 1rem;
   padding: 0.9rem 1rem;
-  border: 1px solid rgb(42 51 68 / 14%);
+  border: 1px solid var(--pb-border-soft);
   border-radius: var(--pb-radius);
-  background: rgb(232 238 242 / 55%);
+  background: var(--pb-tip-bg);
 }
 
 .hands,
@@ -484,11 +695,24 @@ button[aria-pressed="true"],
 
 .staff {
   overflow-x: auto;
+  margin: 0 0 0.6rem;
+  scrollbar-width: thin;
+}
+
+.connect-prompt {
   margin: 0 0 1rem;
 }
 
-.staff :deep([data-wrong] path) {
-  fill: var(--pb-pitch-mark);
-  stroke: var(--pb-pitch-mark);
+.connect-prompt .warn {
+  margin-bottom: 0.5rem;
+}
+
+.connect {
+  padding: 0.55rem 0.9rem;
+  border: 1px solid var(--pb-accent);
+  border-radius: var(--pb-radius);
+  background: var(--pb-accent);
+  color: var(--pb-accent-text);
+  cursor: pointer;
 }
 </style>

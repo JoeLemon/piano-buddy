@@ -21,7 +21,7 @@ const STEP_LABELS: Record<LessonStepId, string> = {
 };
 
 const TAP_GOAL = 8;
-const FIND_GOAL = 8;
+export const FIND_GOAL = 8;
 const LINE_GOAL = 2;
 
 export function lessonSteps(level: 1 | 2 = 1): readonly LessonStepId[] {
@@ -60,7 +60,7 @@ export function lessonGoalText(profile: Profile): string {
       return `短句 ${profile.linesCompleted}/${LINE_GOAL}`;
     case "L2-4":
     case "L2-5":
-      return `找键 ${profile.findCorrect}/${FIND_GOAL}`;
+      return `找键 ${profile.findCorrect}/${FIND_GOAL * 2}`;
     case "L2-test":
       return "过关测试";
     default:
@@ -76,6 +76,12 @@ export function lessonAdvanceCopy(
   if (from === "L1-2" && to === "L1-3") return "这五个音认得了。接下来弹右手短句。";
   if (from === "L1-3" && to === "L1-4") return "右手短句过了。接下来练左手。";
   if (from === "L1-4" && to === "L1-test") return "左手也认完了。准备过关测试。";
+  if (from === "L2-1" && to === "L2-2") return "八分音符过了。接下来练双手交替。";
+  if (from === "L2-2" && to === "L2-3") return "双手交替过了。接下来练双手同拍。";
+  if (from === "L2-3" && to === "L2-4") return "双手同拍过了。接下来练 F 五指。";
+  if (from === "L2-4" && to === "L2-5") return "F 五指过了。接下来练 G 五指。";
+  if (from === "L2-5" && to === "L2-6") return "G 五指过了。接下来把整段挪一次手位。";
+  if (from === "L2-6" && to === "L2-test") return "五指平移过了。准备 L2 过关测试。";
   return "";
 }
 

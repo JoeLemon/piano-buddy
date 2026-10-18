@@ -220,6 +220,27 @@ export function recordFindKey(profile: Profile, targetLabel: string, correct: bo
   return { ...profile, findCorrect, lessonPhase: "lines" };
 }
 
+/** L2-4 / L2-5 找键：每只手各认 8 个，合计 16 个。 */
+const L2_FIND_GOAL = FIND_GOAL * 2;
+
+function isL2FindLesson(profile: Profile): boolean {
+  return profile.lessonId === "L2-4" || profile.lessonId === "L2-5";
+}
+
+/** 没认满 8 个用右手，认满 8 个换左手。 */
+export function l2FindHand(profile: Profile): Hand {
+  return profile.findCorrect < FIND_GOAL ? "RH" : "LH";
+}
+
+/** L2 找键不因弹错回退，只记正确的次数；每手 8 个。 */
+export function recordL2FindKey(profile: Profile, correct: boolean): Profile {
+  if (!isL2FindLesson(profile)) return profile;
+  if (!correct) return profile;
+  const findCorrect = profile.findCorrect + 1;
+  if (findCorrect < L2_FIND_GOAL) return { ...profile, findCorrect };
+  return advanceLesson(profile, profile.lessonId === "L2-4" ? "L2-5" : "L2-6");
+}
+
 export function applyTestResult(
   profile: Profile,
   hands: Hand[],

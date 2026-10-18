@@ -8,6 +8,7 @@ import { initialProfile, testBpm, type Profile } from "../src/domain/profile";
 import type { Hand, Score } from "../src/domain/types";
 import { DURATION_BEATS } from "../src/domain/vocabulary";
 import { loadProfile, saveProfile } from "../src/storage/db";
+import { measureForSounding } from "../src/notation/scorePaint";
 import App from "../src/App.vue";
 import ReviewView from "../src/ui/ReviewView.vue";
 import SightView from "../src/ui/SightView.vue";
@@ -60,6 +61,38 @@ function lineMs(score: Score, hand: Hand, bpm: number): number {
     0,
   );
   return Math.round(beats * (60000 / bpm));
+}
+
+/** 最小可用的 AudioContext：只让 audioAvailable()/previewScore 跑起来。 */
+function installPlainAudioContext() {
+  (globalThis as { AudioContext?: unknown }).AudioContext = class {
+    destination = {};
+    currentTime = 0;
+    createOscillator() {
+      return {
+        type: "sine",
+        frequency: { setValueAtTime() {} },
+        connect() {},
+        start() {},
+        stop() {},
+        disconnect() {},
+        onended: null as (() => void) | null,
+      };
+    }
+    createGain() {
+      return {
+        gain: { setValueAtTime() {}, exponentialRampToValueAtTime() {} },
+        connect() {},
+        disconnect() {},
+      };
+    }
+    resume() {
+      return Promise.resolve();
+    }
+    close() {
+      return Promise.resolve();
+    }
+  };
 }
 
 async function untilText(wrapper: { text: () => string }, text: string, fake = false) {
@@ -210,6 +243,41 @@ describe("SightView", () => {
     expect(wrapper.emitted("finished")).toHaveLength(1);
   });
 
+  it("shows the countdown bar, measure ticks, and how many tries are left", async () => {
+    const profile = sightProfile({ lastSeed: 3, sightUses: { "l1-RH-3": 1 } });
+    const wrapper = mount(SightView, { props: { profile, midiConnected: true } });
+    await flushPromises();
+    expect(wrapper.get("[data-score-id]").attributes("data-score-id")).toBe("l1-RH-3");
+    expect(wrapper.get("[data-test=sight-remaining]").text()).toBe("这条还能练 1 遍");
+    expect(wrapper.find("[data-test=prepare-progress]").exists()).toBe(true);
+    expect(wrapper.findAll("[data-test=score-progress] .tick")).toHaveLength(3);
+    const score = generateL1({ hand: "RH", seed: 3, mode: "sight" });
+    const label = wrapper.get("[data-test=score-progress-label]").text();
+    expect(label).toBe(
+      `第 ${measureForSounding(score, "RH", 0).current}/${score.staves.RH!.measures.length} 小节`,
+    );
+    expect(wrapper.get("[data-test=score-progress]").attributes("aria-valuenow")).toBe("0");
+  });
+
+  it("follows the playback cursor with the progress bar and the active note", async () => {
+    vi.useFakeTimers();
+    installPlainAudioContext();
+    const wrapper = mount(SightView, {
+      props: { profile: sightProfile({ lastSeed: 1 }), midiConnected: true },
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(wrapper.get("[data-test=score-progress]").attributes("aria-valuenow")).toBe("0");
+    await wrapper.get("[data-test=preview]").trigger("click");
+    // 一开始就把游标停在第一个音上
+    expect(wrapper.find("[data-active]").exists()).toBe(true);
+    await vi.advanceTimersByTimeAsync(60);
+    expect(wrapper.get("[data-test=score-progress]").attributes("aria-valuenow")).not.toBe("0");
+    // 播完后收回跟随，进度回到起点
+    await vi.advanceTimersByTimeAsync(22000);
+    expect(wrapper.find("[data-active]").exists()).toBe(false);
+    expect(wrapper.get("[data-test=score-progress]").attributes("aria-valuenow")).toBe("0");
+  });
+
   it("does not open a line that has already been started twice", async () => {
     const wrapper = mount(SightView, {
       props: {
@@ -253,6 +321,26 @@ describe("ReviewView", () => {
     expect(wrapper.find("[data-wrong]").exists()).toBe(true);
     await wrapper.get("[data-test=next-line]").trigger("click");
     expect(wrapper.emitted("next")).toHaveLength(1);
+  });
+
+  it("summarizes the measure count and the error counts", () => {
+    const score = generateL1({ hand: "RH", seed: 2, mode: "sight" });
+    const wrongId = sounding(score, "RH")[0].id;
+    const wrapper = mount(ReviewView, {
+      props: {
+        feedback: "完成啦！",
+        score,
+        hand: "RH",
+        wrongPitchNoteIds: [wrongId],
+        lateNoteIds: ["n1", "n2"],
+        hasErrorBook: false,
+      },
+    });
+    const summary = wrapper.get("[data-test=review-summary]").text();
+    expect(summary).toContain(`共 ${score.staves.RH!.measures.length} 小节`);
+    expect(summary).toContain("错音 1 处");
+    expect(summary).toContain("节奏偏差 2 处");
+    expect(summary).not.toContain("%");
   });
 });
 
@@ -461,21 +549,23 @@ describe("App", () => {
     expect(wrapper.get("[data-score-id]").attributes("data-score-id")).not.toBe(playedId);
   });
 
-  it("stays on home when both hands have passed and 先认谱 is clicked", async () => {
+  it("enters the L2 lessons when both hands have passed and 先认谱 is clicked", async () => {
     await saveProfile({
       ...initialProfile(),
       assessment: { knowsTreble: true, knowsBass: true, keepsPulse: true },
       lessonId: "L1-test",
       l1RightPassed: true,
       l1LeftPassed: true,
+      seenReadingTips: true,
     });
     const wrapper = mount(App);
     await untilText(wrapper, "5 分钟视奏");
     await wrapper.get("[data-test=reading]").trigger("click");
-    await flushPromises();
-    expect(wrapper.find("[data-test=reading]").exists()).toBe(true);
-    expect(wrapper.find("[data-test=keyboard]").exists()).toBe(false);
-    expect(wrapper.text()).toContain("L1 的音已经通过了。");
+    await untilText(wrapper, "八分音符");
+    expect(wrapper.get("[data-active=true]").text()).toBe("八分音符");
+    expect(wrapper.find("[data-test=keyboard]").exists()).toBe(true);
+    const saved = await loadProfile();
+    expect(saved.lessonId).toBe("L2-1");
   });
 
   it("keeps an unlock after the view is created again", async () => {

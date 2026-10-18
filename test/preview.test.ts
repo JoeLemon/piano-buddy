@@ -181,3 +181,106 @@ describe("previewScore stop", () => {
     expect(disconnectsWhileClosed).toEqual([]);
   });
 });
+
+const lineWithRest: Score = {
+  ...oneNote,
+  staves: {
+    RH: {
+      clef: "treble",
+      measures: [
+        {
+          notes: [
+            { id: "a", pitches: [{ step: "C", octave: 4, alteration: 0 }], duration: "q" },
+            { id: "r", pitches: [], duration: "qr" },
+            { id: "b", pitches: [{ step: "E", octave: 4, alteration: 0 }], duration: "q" },
+            { id: "c", pitches: [{ step: "G", octave: 4, alteration: 0 }], duration: "q" },
+          ],
+        },
+      ],
+    },
+  },
+};
+
+function installPlainAudioContext() {
+  (globalThis as { AudioContext?: unknown }).AudioContext = class {
+    destination = {};
+    currentTime = 0;
+    createOscillator() {
+      return {
+        type: "sine",
+        frequency: { setValueAtTime() {} },
+        connect() {},
+        start() {},
+        stop() {},
+        disconnect() {},
+        onended: null as (() => void) | null,
+      };
+    }
+    createGain() {
+      return {
+        gain: { setValueAtTime() {}, exponentialRampToValueAtTime() {} },
+        connect() {},
+        disconnect() {},
+      };
+    }
+    resume() {
+      return Promise.resolve();
+    }
+    close() {
+      return Promise.resolve();
+    }
+  };
+}
+
+describe("previewScore progress", () => {
+  it("reports every sounding note in order and then the end", () => {
+    vi.useFakeTimers();
+    installPlainAudioContext();
+    const seen: { index: number; midi: number }[] = [];
+    let ended = 0;
+    const playback = previewScore(lineWithRest, "RH", 60, {
+      onNote: (index, midi) => seen.push({ index, midi }),
+      onEnd: () => {
+        ended += 1;
+      },
+    });
+    try {
+      vi.advanceTimersByTime(60);
+      expect(seen).toEqual([{ index: 0, midi: 60 }]);
+      // 休止符不占用序号，第二个发声音在第二拍才响
+      vi.advanceTimersByTime(2000);
+      expect(seen).toEqual([
+        { index: 0, midi: 60 },
+        { index: 1, midi: 64 },
+      ]);
+      vi.advanceTimersByTime(1000);
+      expect(seen).toEqual([
+        { index: 0, midi: 60 },
+        { index: 1, midi: 64 },
+        { index: 2, midi: 67 },
+      ]);
+      expect(ended).toBe(0);
+      vi.advanceTimersByTime(20000);
+      expect(ended).toBe(1);
+    } finally {
+      playback.stop();
+    }
+  });
+
+  it("drops pending callbacks when stopped early", () => {
+    vi.useFakeTimers();
+    installPlainAudioContext();
+    const seen: number[] = [];
+    let ended = 0;
+    const playback = previewScore(lineWithRest, "RH", 60, {
+      onNote: (index) => seen.push(index),
+      onEnd: () => {
+        ended += 1;
+      },
+    });
+    playback.stop();
+    vi.advanceTimersByTime(30000);
+    expect(seen).toEqual([]);
+    expect(ended).toBe(0);
+  });
+});

@@ -19,8 +19,14 @@ import {
 import type { Hand, NoteEvent, Score } from "../domain/types";
 import { fingerFor, pitchesFor } from "../domain/vocabulary";
 import { subscribeMidi, type MidiNote } from "../midi/access";
+import {
+  paintScoreProgress,
+  scrollScoreToCursor,
+  scoreProgressRatio,
+} from "../notation/scorePaint";
 import { renderScore } from "../notation/renderScore";
 import KeyboardDiagram from "./KeyboardDiagram.vue";
+import ScoreProgress from "./ScoreProgress.vue";
 
 const props = defineProps<{
   profile: Profile;
@@ -29,6 +35,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   "update-profile": [profile: Profile];
+  "connect-midi": [];
 }>();
 
 const TAP_CARD = "跟着节拍器敲任何一个键。只看间隔稳不稳。";
@@ -72,11 +79,19 @@ let midiToken = 0;
 let stopMidi: (() => void) | null = null;
 let pulse: { stop: () => void } | null = null;
 let bannerTimer: ReturnType<typeof setTimeout> | null = null;
+const correctIds = new Set<string>();
+const wrongIds = new Set<string>();
 
 const steps = lessonSteps();
 const activeStep = computed(() => currentLessonIndex(profileState.value));
 const goalText = computed(() => lessonGoalText(profileState.value));
 const showsStaff = computed(() => isFind(profileState.value) || isLine(profileState.value));
+const progress = computed(() => {
+  const current = score.value;
+  if (!current || !showsStaff.value) return 0;
+  return scoreProgressRatio(current, hand.value, noteIndex.value);
+});
+watch(progress, applyPaint, { flush: "post" });
 const cardText = computed(() => {
   const profile = profileState.value;
   if (profile.lessonId === "L1-1") return TAP_CARD;
@@ -89,6 +104,15 @@ const highlightMidi = computed(() => {
   const profile = profileState.value;
   if (isFind(profile) && targetLabel.value) return pitchToMidi(parsePitchLabel(targetLabel.value));
   if (isLine(profile)) return sounding.value[noteIndex.value]?.midi ?? null;
+  return null;
+});
+
+// 传给键盘图：当前该用哪只手、哪根手指。没有目标音时不点亮任何一只（例如 L1-1 纯节奏课）。
+const activeHand = computed<Hand | null>(() => (highlightMidi.value == null ? null : hand.value));
+const activeFinger = computed<number | null>(() => {
+  const profile = profileState.value;
+  if (isFind(profile) && targetLabel.value) return fingerNumber(hand.value, targetLabel.value);
+  if (isLine(profile)) return sounding.value[noteIndex.value]?.finger ?? null;
   return null;
 });
 
@@ -152,6 +176,8 @@ function beginLesson() {
   pendingQueueDrop.value = false;
   targetLabel.value = null;
   score.value = null;
+  correctIds.clear();
+  wrongIds.clear();
   if (isFind(profileState.value)) presentFind();
   else if (isLine(profileState.value)) presentLine();
   syncPulse();
@@ -161,6 +187,8 @@ function presentFind() {
   const profile = profileState.value;
   const nextHand = handFor(profile);
   hand.value = nextHand;
+  correctIds.clear();
+  wrongIds.clear();
   const labels = nextHand === "RH" ? RH_LABELS : LH_LABELS;
   const kept = profile.weakPitchQueue.filter((label) => labels.includes(label));
   const queued = kept[0];
@@ -190,6 +218,8 @@ function presentFind() {
 function presentLine(profile = profileState.value) {
   const nextHand = handFor(profile);
   hand.value = nextHand;
+  correctIds.clear();
+  wrongIds.clear();
   targetLabel.value = null;
   noteIndex.value = 0;
   hint.value = "";
@@ -214,6 +244,14 @@ function onFind(note: MidiNote) {
   const label = targetLabel.value;
   if (!label) return;
   const correct = note.midi === pitchToMidi(parsePitchLabel(label));
+  if (correct) {
+    wrongIds.clear();
+    correctIds.add("target");
+    applyPaint();
+  } else {
+    wrongIds.add("target");
+    applyPaint();
+  }
   commit(recordFindKey(profileState.value, label, correct));
   if (!correct || !isFind(profileState.value)) return;
   presentFind();
@@ -224,9 +262,13 @@ function onLine(note: MidiNote) {
   if (!expected) return;
   if (note.midi !== expected.midi) {
     hint.value = hintFor(expected.label);
+    wrongIds.add(expected.id);
+    applyPaint();
     return;
   }
   hint.value = "";
+  wrongIds.delete(expected.id);
+  correctIds.add(expected.id);
   if (noteIndex.value + 1 < sounding.value.length) {
     noteIndex.value += 1;
     return;
@@ -280,6 +322,20 @@ function drawStaff() {
     return;
   }
   renderScore(el, current, hand.value, true);
+  applyPaint();
+}
+
+/** 给当前谱面上色（弹过/弹对/弹错），并把水平滚动条推进到当前待弹音。 */
+function applyPaint() {
+  const el = staffEl.value;
+  const current = score.value;
+  if (!el || !current || !showsStaff.value) return;
+  paintScoreProgress(el, current, hand.value, {
+    playedCount: noteIndex.value,
+    correctIds,
+    wrongIds,
+  });
+  if (isLine(profileState.value)) scrollScoreToCursor(el, current, hand.value, noteIndex.value);
 }
 
 async function syncMidi(connected: boolean) {
@@ -340,14 +396,14 @@ function singleNoteScore(label: string, nextHand: Hand): Score {
   };
 }
 
-function soundingNotes(current: Score, nextHand: Hand): { label: string; midi: number }[] {
+function soundingNotes(current: Score, nextHand: Hand): { id: string; label: string; midi: number; finger: number | null }[] {
   const measures = current.staves[nextHand]?.measures ?? [];
-  const notes: { label: string; midi: number }[] = [];
+  const notes: { id: string; label: string; midi: number; finger: number | null }[] = [];
   for (const measure of measures) {
     for (const event of measure.notes) {
       const pitch = event.pitches[0];
       if (!pitch || event.duration.endsWith("r")) continue;
-      notes.push({ label: pitchLabel(pitch), midi: pitchToMidi(pitch) });
+      notes.push({ id: event.id, label: pitchLabel(pitch), midi: pitchToMidi(pitch), finger: event.fingers?.[0] ?? null });
     }
   }
   return notes;
@@ -400,12 +456,18 @@ function handFor(profile: Profile): Hand {
         知道了
       </button>
     </div>
-    <p v-if="!midiConnected" class="warn">请连接 MIDI 键盘。卡片可以先看。</p>
+    <div v-if="!midiConnected" class="connect-prompt">
+      <p class="warn">请连接 MIDI 键盘。卡片可以先看。</p>
+      <button type="button" class="connect" data-test="connect-midi" @click="emit('connect-midi')">
+        连接 MIDI 键盘
+      </button>
+    </div>
     <p v-if="cardText" class="card">{{ cardText }}</p>
     <p v-if="lineLead" class="card">{{ lineLead }}</p>
     <p v-if="hint" class="hint">{{ hint }}</p>
     <div v-if="showsStaff" ref="staffEl" class="staff"></div>
-    <KeyboardDiagram :highlight-midi="highlightMidi" />
+    <ScoreProgress v-if="showsStaff" :value="progress" />
+    <KeyboardDiagram :highlight-midi="highlightMidi" :active-hand="activeHand" :active-finger="activeFinger" :highlight-seq="noteIndex" />
   </div>
 </template>
 
@@ -421,7 +483,7 @@ function handFor(profile: Profile): Hand {
 
 .progress li {
   padding: 0.25rem 0.55rem;
-  border: 1px solid rgb(42 51 68 / 18%);
+  border: 1px solid var(--pb-border-soft);
   border-radius: 999px;
   color: var(--pb-muted);
   font-size: 0.85rem;
@@ -473,9 +535,9 @@ function handFor(profile: Profile): Hand {
 .tips {
   margin: 0 0 1rem;
   padding: 0.9rem 1rem;
-  border: 1px solid rgb(42 51 68 / 14%);
+  border: 1px solid var(--pb-border-soft);
   border-radius: var(--pb-radius);
-  background: rgb(232 238 242 / 55%);
+  background: var(--pb-tip-bg);
 }
 
 .primary {
@@ -489,6 +551,24 @@ function handFor(profile: Profile): Hand {
 
 .staff {
   overflow-x: auto;
+  margin: 0 0 0.6rem;
+  scrollbar-width: thin;
+}
+
+.connect-prompt {
   margin: 0 0 1rem;
+}
+
+.connect-prompt .warn {
+  margin-bottom: 0.5rem;
+}
+
+.connect {
+  padding: 0.55rem 0.9rem;
+  border: 1px solid var(--pb-accent);
+  border-radius: var(--pb-radius);
+  background: var(--pb-accent);
+  color: var(--pb-accent-text);
+  cursor: pointer;
 }
 </style>

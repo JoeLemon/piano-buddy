@@ -77,6 +77,12 @@ describe("ReadingView", () => {
     const highlighted = wrapper.findAll(".white-key").findIndex((key) => key.classes().includes("is-target"));
     expect(whiteKeyMidis()[highlighted]).toBe(pitchToMidi(parsePitchLabel("C3")));
 
+    // 左手五指位的 C3 用左手五指，右手整体淡出。
+    const activeFinger = wrapper.find(".hand[data-hand='LH'] .finger.is-active");
+    expect(activeFinger.exists()).toBe(true);
+    expect(activeFinger.text()).toBe("5");
+    expect(wrapper.find(".hand[data-hand='RH']").classes()).toContain("is-dim");
+
     const presented = wrapper.emitted("update-profile")?.[0]?.[0] as Profile;
     expect(presented.findCorrect).toBe(6);
     expect(presented.lessonId).toBe("L1-4");

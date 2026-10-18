@@ -176,11 +176,12 @@ function openVoice(factory: Factory, notes: StemmableNote[], time: string) {
 
 function addFingers(factory: Factory, notes: StemmableNote[], measure: Measure): void {
   measure.notes.forEach((event, index) => {
-    const finger = event.fingers?.[0];
-    if (finger == null) return;
+    // 和弦音的每个音各有一个指法，合并显示（如 C-E-G → 1·3·5）。
+    const fingers = (event.fingers ?? []).filter((finger) => finger >= 1 && finger <= 5);
+    if (fingers.length === 0) return;
     notes[index]?.addModifier(
       factory.Annotation({
-        text: String(finger),
+        text: fingers.length === 1 ? String(fingers[0]) : fingers.join("·"),
         vJustify: "top",
         font: { family: "IBM Plex Sans, sans-serif", size: 14, weight: "600" },
       }),

@@ -8,6 +8,8 @@ export type TimelineNote = {
   beat: number;
   hand: Hand;
   label: string;
+  /** 该音在五指位里的指法编号（1–5），无指法时为 null。 */
+  finger: number | null;
 };
 
 const HANDS: readonly Hand[] = ["RH", "LH"];
@@ -29,6 +31,7 @@ export function flattenScore(score: Score): TimelineNote[] {
             beat,
             hand,
             label: pitchLabel(pitch),
+            finger: note.fingers?.[0] ?? null,
           });
         }
         beat += beats;

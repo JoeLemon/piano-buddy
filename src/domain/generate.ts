@@ -1,3 +1,4 @@
+import { annotateScore } from "./fingering";
 import type { Duration, Hand, Measure, Mode, NoteEvent, Pitch, Score } from "./types";
 import { DURATION_BEATS, fingerFor, pitchesFor } from "./vocabulary";
 
@@ -27,7 +28,7 @@ function buildScore(request: { hand: Hand; seed: number; mode: Mode }, random: (
   const measures = Array.from({ length: MEASURE_COUNT }, (_, measureIndex) =>
     fillMeasure(hand, vocabulary, random, measureIndex),
   );
-  return {
+  const score: Score = {
     id: `l1-${hand}-${seed}`,
     mode,
     level: 1,
@@ -42,6 +43,9 @@ function buildScore(request: { hand: Hand; seed: number; mode: Mode }, random: (
       },
     },
   };
+  // 过一遍指法引擎（pianoplayer 移植）：C 手位指法作为锚点保留，
+  // 越出手位的音由求解器补上。全部有手位指法时原样返回。
+  return annotateScore(score);
 }
 
 function fillMeasure(hand: Hand, vocabulary: Pitch[], random: () => number, measureIndex: number): Measure {

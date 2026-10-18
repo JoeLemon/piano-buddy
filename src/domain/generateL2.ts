@@ -1,6 +1,7 @@
 import { isAllowed } from "./allowed";
-import type { Duration, Hand, KeySignature, Measure, Mode, NoteEvent, Pitch, Score } from "./types";
-import { DURATION_BEATS, fingerFor, pitchesFor, type PositionId } from "./vocabulary";
+import { annotateScore } from "./fingering";
+import type { Duration, Hand, KeySignature, Measure, Mode, NoteEvent, Pitch, PositionId, Score } from "./types";
+import { DURATION_BEATS, fingerFor, pitchesFor } from "./vocabulary";
 
 export type L2Shape =
   | { kind: "eighths-single"; hand: Hand }
@@ -52,37 +53,37 @@ function buildScore(request: { seed: number; mode: Mode; shape: L2Shape }, rando
   const { mode, seed, shape } = request;
   switch (shape.kind) {
     case "eighths-single":
-      return assemble(scoreId(shape, seed), mode, "C", [shape.hand], {
+      return assembled(assemble(scoreId(shape, seed), mode, "C", [shape.hand], {
         [shape.hand]: measuresFor(shape.hand, "C", takeBars(random, EIGHTH_BARS), random),
-      });
+      }));
     case "alternate":
-      return assemble(scoreId(shape, seed), mode, "C", [...HANDS], alternateHands(random));
+      return assembled(assemble(scoreId(shape, seed), mode, "C", [...HANDS], alternateHands(random)));
     case "together":
-      return assemble(
+      return assembled(assemble(
         scoreId(shape, seed),
         mode,
         "C",
         [...HANDS],
         shape.texture === "same" ? pairedHands("C", EIGHTH_BARS, random) : heldHands(random),
-      );
+      ));
     case "key-find":
-      return assemble(scoreId(shape, seed), mode, shape.key, [shape.hand], {
+      return assembled(assemble(scoreId(shape, seed), mode, shape.key, [shape.hand], {
         [shape.hand]: findingMeasures(shape.hand, shape.key, random),
-      });
+      }));
     case "key-line":
-      return assemble(scoreId(shape, seed), mode, shape.key, [shape.hand], {
+      return assembled(assemble(scoreId(shape, seed), mode, shape.key, [shape.hand], {
         [shape.hand]: measuresFor(shape.hand, shape.key, takeBars(random, EIGHTH_BARS), random),
-      });
+      }));
     case "shift-once":
-      return assemble(scoreId(shape, seed), mode, "C", [shape.hand], {
+      return assembled(assemble(scoreId(shape, seed), mode, "C", [shape.hand], {
         [shape.hand]: shiftingMeasures(shape.hand, random),
-      });
+      }));
     case "test":
     case "sight": {
       const key = LESSON_KEYS[Math.floor(random() * LESSON_KEYS.length)];
       const dense = EIGHTH_BARS.filter((bar) => bar.filter((duration) => duration === "8").length >= 4);
       const catalog = shape.kind === "sight" && dense.length > 0 ? dense : EIGHTH_BARS;
-      return assemble(scoreId(shape, seed), mode, key, [...HANDS], pairedHands(key, catalog, random));
+      return assembled(assemble(scoreId(shape, seed), mode, key, [...HANDS], pairedHands(key, catalog, random)));
     }
   }
 }
@@ -126,6 +127,14 @@ function assemble(
     bpm: 60,
     staves,
   };
+}
+
+/**
+ * 组装后过一遍指法引擎（pianoplayer 移植）：五位手位指法作为锚点保留，
+ * 越出手位的音与和弦音由求解器补上。全部有手位指法时原样返回。
+ */
+function assembled(score: Score): Score {
+  return annotateScore(score);
 }
 
 function alternateHands(random: () => number): Record<Hand, Measure[]> {

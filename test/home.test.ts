@@ -86,6 +86,18 @@ describe("HomeView", () => {
     expect(wrapper.text()).not.toContain("%");
   });
 
+  it("opens the theory practice hub without requiring a MIDI unlock", async () => {
+    const wrapper = mount(HomeView, {
+      props: {
+        profile: profile(),
+        rightUnlocked: false,
+        leftUnlocked: false,
+      },
+    });
+    await wrapper.get("[data-test=practice]").trigger("click");
+    expect(wrapper.emitted("open-practice")).toBeTruthy();
+  });
+
   it("shows the error book when unlocked and snippets exist", async () => {
     const wrapper = mount(HomeView, {
       props: {
@@ -97,6 +109,43 @@ describe("HomeView", () => {
     expect(wrapper.find("[data-test=error-book]").exists()).toBe(true);
     await wrapper.get("[data-test=error-book]").trigger("click");
     expect(wrapper.emitted("open-error")).toBeTruthy();
+  });
+
+  it("puts one next step in front and routes it into the lesson", async () => {
+    const wrapper = mount(HomeView, {
+      props: {
+        profile: profile({
+          assessment: { knowsTreble: true, knowsBass: false, keepsPulse: true },
+          lessonId: "L1-3",
+          l1RightPassed: true,
+          linesCompleted: 1,
+        }),
+        rightUnlocked: true,
+        leftUnlocked: false,
+      },
+    });
+    expect(wrapper.get("[data-test=next-goal]").text()).toBe("短句 1/2");
+    expect(wrapper.get(".hero h1").text()).toContain("右手短句");
+    await wrapper.get("[data-test=next-cta]").trigger("click");
+    expect(wrapper.emitted("open-reading")).toHaveLength(1);
+  });
+
+  it("shows where the learner stands on the path", () => {
+    const wrapper = mount(HomeView, {
+      props: {
+        profile: profile({
+          assessment: { knowsTreble: true, knowsBass: true, keepsPulse: true },
+          lessonId: "L2-1",
+          l1RightPassed: true,
+          l1LeftPassed: true,
+        }),
+        rightUnlocked: true,
+        leftUnlocked: true,
+      },
+    });
+    expect(wrapper.get('[data-stage=L1]').attributes("data-state")).toBe("done");
+    expect(wrapper.get('[data-stage=L2]').attributes("data-state")).toBe("current");
+    expect(wrapper.get("[data-test=learning-path]").text()).toContain("正在学");
   });
 });
 

@@ -53,15 +53,16 @@ const ticks = computed(() => {
   flex: 1;
   min-width: 0;
   height: 0.4rem;
-  border-radius: 999px;
-  background: var(--pb-scrollbar-track, rgb(42 51 68 / 12%));
+  border-radius: var(--pb-radius-pill);
+  background: var(--pb-border-soft);
   overflow: hidden;
 }
 
+/* 练习完成度：填充用香槟金点缀色，是规范里少数允许大面积用金的位置 */
 .fill {
   height: 100%;
-  border-radius: 999px;
-  background: var(--pb-score-correct, #a3c78a);
+  border-radius: var(--pb-radius-pill);
+  background: var(--pb-accent-2);
   transition: width 160ms ease-out;
 }
 

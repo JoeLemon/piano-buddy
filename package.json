@@ -5,7 +5,10 @@
   "scripts": {
     "dev": "vite",
     "test": "vitest run",
-    "build": "vue-tsc --noEmit && vite build"
+    "build": "vue-tsc --noEmit && vite build",
+    "validate:content": "vite-node scripts/validate-content.ts",
+    "build:catalog": "vite-node scripts/build-catalog.ts",
+    "export:demo": "vite-node scripts/export-demo-motion.ts"
   },
   "dependencies": {
     "idb": "^8.0.2",

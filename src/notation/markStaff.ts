@@ -4,6 +4,13 @@ import { grandRows } from "./scorePaint";
 
 export type StaffMarkColor = string;
 
+/**
+ * 谱面标记色：与 tokens.css 的 --pb-pitch-mark / --pb-late-mark（暖白卡内）一致。
+ * ReviewView 还会用 CSS 变量覆盖一次，这里保留值是为了在没有样式表时也能上色。
+ */
+const PITCH_MARK = "#b96a55";
+const LATE_MARK = "#6e7f92";
+
 /** Paint stave notes that match the given id→color map. */
 export function markStaffNotes(
   element: HTMLElement,
@@ -35,9 +42,9 @@ export function markMapFromIds(
   lateNoteIds: readonly string[],
 ): Map<string, StaffMarkColor> {
   const map = new Map<string, StaffMarkColor>();
-  for (const id of wrongPitchNoteIds) map.set(id, "#8a3d12");
+  for (const id of wrongPitchNoteIds) map.set(id, PITCH_MARK);
   for (const id of lateNoteIds) {
-    if (!map.has(id)) map.set(id, "#1f5f8b");
+    if (!map.has(id)) map.set(id, LATE_MARK);
   }
   return map;
 }
@@ -59,8 +66,8 @@ export function grandMarkMapFromIds(
     const key = `${hand}:${id}`;
     if (!map.has(key)) map.set(key, color);
   };
-  for (const id of wrongPitchNoteIds) put(id, "#8a3d12");
-  for (const id of lateNoteIds) put(id, "#1f5f8b");
+  for (const id of wrongPitchNoteIds) put(id, PITCH_MARK);
+  for (const id of lateNoteIds) put(id, LATE_MARK);
   return map;
 }
 
@@ -71,11 +78,11 @@ function paintGroup(group: Element | undefined, color: StaffMarkColor | undefine
     group.removeAttribute("data-late");
     return;
   }
-  const isLate = color === "late" || color === "#1f5f8b";
+  const isLate = color === "late" || color === LATE_MARK;
   group.setAttribute(isLate ? "data-late" : "data-wrong", "true");
   if (!isLate) group.removeAttribute("data-late");
   if (isLate) group.removeAttribute("data-wrong");
-  const fill = color === "late" ? "#1f5f8b" : color === "pitch" ? "#8a3d12" : color;
+  const fill = color === "late" ? LATE_MARK : color === "pitch" ? PITCH_MARK : color;
   const paths = group.querySelectorAll("path");
   for (let pathIndex = 0; pathIndex < paths.length; pathIndex += 1) {
     const path = paths.item(pathIndex);

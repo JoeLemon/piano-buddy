@@ -35,16 +35,11 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   "update-profile": [profile: Profile];
-  "connect-midi": [];
 }>();
 
 const TAP_CARD = "跟着节拍器敲任何一个键。只看间隔稳不稳。";
 const LINE_LEAD = "弹出谱上的音。这个音弹对才进入下一音。";
-const READING_TIPS = [
-  "可以看键盘。",
-  "这个阶段的目标是认准，不是连续视奏。",
-  "认熟之后，视奏里才会出现这些音。",
-];
+const READING_TIPS = ["可以看键盘；目标是认准，不是连续视奏。"];
 
 const HINTS: Record<string, string> = {
   C4: "中央 C 写在高音谱下加一线，右手大拇指。",
@@ -456,18 +451,15 @@ function handFor(profile: Profile): Hand {
         知道了
       </button>
     </div>
-    <div v-if="!midiConnected" class="connect-prompt">
-      <p class="warn">请连接 MIDI 键盘。卡片可以先看。</p>
-      <button type="button" class="connect" data-test="connect-midi" @click="emit('connect-midi')">
-        连接 MIDI 键盘
-      </button>
-    </div>
+    <p v-if="!midiConnected" class="warn">请连接 MIDI 键盘（右上角）。卡片可以先看。</p>
     <p v-if="cardText" class="card">{{ cardText }}</p>
     <p v-if="lineLead" class="card">{{ lineLead }}</p>
     <p v-if="hint" class="hint">{{ hint }}</p>
     <div v-if="showsStaff" ref="staffEl" class="staff"></div>
     <ScoreProgress v-if="showsStaff" :value="progress" />
-    <KeyboardDiagram :highlight-midi="highlightMidi" :active-hand="activeHand" :active-finger="activeFinger" :highlight-seq="noteIndex" />
+    <div class="keyboard-panel">
+      <KeyboardDiagram :highlight-midi="highlightMidi" :active-hand="activeHand" :active-finger="activeFinger" :highlight-seq="noteIndex" />
+    </div>
   </div>
 </template>
 
@@ -484,14 +476,14 @@ function handFor(profile: Profile): Hand {
 .progress li {
   padding: 0.25rem 0.55rem;
   border: 1px solid var(--pb-border-soft);
-  border-radius: 999px;
+  border-radius: var(--pb-radius-pill);
   color: var(--pb-muted);
   font-size: 0.85rem;
 }
 
 .progress li[data-active="true"] {
-  background: var(--pb-accent);
-  border-color: var(--pb-accent);
+  background: var(--pb-accent-2);
+  border-color: var(--pb-accent-2);
   color: var(--pb-accent-text);
   font-weight: 600;
 }
@@ -518,7 +510,7 @@ function handFor(profile: Profile): Hand {
 .banner {
   padding: 0.65rem 0.8rem;
   border-radius: var(--pb-radius);
-  background: rgb(201 132 42 / 16%);
+  background: var(--pb-accent-2-soft);
   color: var(--pb-ink);
 }
 
@@ -542,9 +534,9 @@ function handFor(profile: Profile): Hand {
 
 .primary {
   padding: 0.5rem 0.85rem;
-  border: 1px solid var(--pb-accent);
+  border: 1px solid var(--pb-accent-2);
   border-radius: var(--pb-radius);
-  background: var(--pb-accent);
+  background: var(--pb-accent-2);
   color: var(--pb-accent-text);
   cursor: pointer;
 }
@@ -555,20 +547,17 @@ function handFor(profile: Profile): Hand {
   scrollbar-width: thin;
 }
 
-.connect-prompt {
-  margin: 0 0 1rem;
-}
-
-.connect-prompt .warn {
-  margin-bottom: 0.5rem;
-}
-
-.connect {
-  padding: 0.55rem 0.9rem;
-  border: 1px solid var(--pb-accent);
+/* 键盘区：深绿舞台底，让米白琴键浮在上面（规范 §4.5） */
+.keyboard-panel {
+  display: flex;
+  justify-content: center;
+  width: fit-content;
+  max-width: 100%;
+  margin: var(--pb-space-3) auto 0;
+  padding: var(--pb-space-2) var(--pb-space-3);
+  border: 1px solid var(--pb-key-gap);
   border-radius: var(--pb-radius);
-  background: var(--pb-accent);
-  color: var(--pb-accent-text);
-  cursor: pointer;
+  background: var(--pb-bg-deep);
 }
+
 </style>

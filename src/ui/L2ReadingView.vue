@@ -34,7 +34,6 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   "update-profile": [profile: Profile];
-  "connect-midi": [];
 }>();
 
 const LINE_LEAD = "弹出谱上的音。这个音弹对才进入下一音。";
@@ -489,24 +488,21 @@ function positionForHand(current: Score, nextHand: Hand, fromKey: string): Posit
     </ol>
     <p v-if="goalText" class="goal" data-test="lesson-goal">{{ goalText }}</p>
     <p v-if="advanceBanner" class="banner" data-test="advance-banner">{{ advanceBanner }}</p>
-    <div v-if="!midiConnected" class="connect-prompt">
-      <p class="warn">请连接 MIDI 键盘。卡片可以先看。</p>
-      <button type="button" class="connect" data-test="connect-midi" @click="emit('connect-midi')">
-        连接 MIDI 键盘
-      </button>
-    </div>
+    <p v-if="!midiConnected" class="warn">请连接 MIDI 键盘（右上角）。卡片可以先看。</p>
     <p v-if="cardText" class="card">{{ cardText }}</p>
     <p v-if="lineLead" class="card">{{ lineLead }}</p>
     <p v-if="hint" class="hint">{{ hint }}</p>
     <div v-if="playable" ref="staffEl" class="staff"></div>
     <ScoreProgress v-if="playable" :value="progress" />
-    <KeyboardDiagram
-      :highlight-midi="highlightMidi"
-      :active-hand="activeHand"
-      :active-finger="activeFinger"
-      :highlight-seq="noteIndex"
-      :position="diagramPosition"
-    />
+    <div class="keyboard-panel">
+      <KeyboardDiagram
+        :highlight-midi="highlightMidi"
+        :active-hand="activeHand"
+        :active-finger="activeFinger"
+        :highlight-seq="noteIndex"
+        :position="diagramPosition"
+      />
+    </div>
   </div>
 </template>
 
@@ -523,14 +519,14 @@ function positionForHand(current: Score, nextHand: Hand, fromKey: string): Posit
 .progress li {
   padding: 0.25rem 0.55rem;
   border: 1px solid var(--pb-border-soft);
-  border-radius: 999px;
+  border-radius: var(--pb-radius-pill);
   color: var(--pb-muted);
   font-size: 0.85rem;
 }
 
 .progress li[data-active="true"] {
-  background: var(--pb-accent);
-  border-color: var(--pb-accent);
+  background: var(--pb-accent-2);
+  border-color: var(--pb-accent-2);
   color: var(--pb-accent-text);
   font-weight: 600;
 }
@@ -556,7 +552,7 @@ function positionForHand(current: Score, nextHand: Hand, fromKey: string): Posit
 .banner {
   padding: 0.65rem 0.8rem;
   border-radius: var(--pb-radius);
-  background: rgb(201 132 42 / 16%);
+  background: var(--pb-accent-2-soft);
   color: var(--pb-ink);
 }
 
@@ -575,20 +571,17 @@ function positionForHand(current: Score, nextHand: Hand, fromKey: string): Posit
   scrollbar-width: thin;
 }
 
-.connect-prompt {
-  margin: 0 0 1rem;
-}
-
-.connect-prompt .warn {
-  margin-bottom: 0.5rem;
-}
-
-.connect {
-  padding: 0.55rem 0.9rem;
-  border: 1px solid var(--pb-accent);
+/* 键盘区：深绿舞台底，让米白琴键浮在上面（规范 §4.5） */
+.keyboard-panel {
+  display: flex;
+  justify-content: center;
+  width: fit-content;
+  max-width: 100%;
+  margin: var(--pb-space-3) auto 0;
+  padding: var(--pb-space-2) var(--pb-space-3);
+  border: 1px solid var(--pb-key-gap);
   border-radius: var(--pb-radius);
-  background: var(--pb-accent);
-  color: var(--pb-accent-text);
-  cursor: pointer;
+  background: var(--pb-bg-deep);
 }
+
 </style>

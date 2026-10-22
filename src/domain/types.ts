@@ -6,7 +6,7 @@ export type Hand = "RH" | "LH";
 export type Clef = "treble" | "bass";
 export type Duration = "w" | "hd" | "h" | "qd" | "q" | "8" | "16" | "wr" | "hr" | "qr" | "8r" | "16r";
 export type KeySignature = "C" | "F" | "G" | "D" | "Bb";
-export type Mode = "reading-lesson" | "reading-test" | "sight";
+export type Mode = "reading-lesson" | "reading-test" | "sight" | "repertoire";
 export type PositionId = "C" | "D-shift" | "F" | "G" | "D-major" | "Bb";
 
 export type NoteEvent = {

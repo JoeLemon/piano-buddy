@@ -3,16 +3,18 @@ import { flattenScore } from "../domain/timeline";
 
 /**
  * 按弹奏进度给乐谱上色：
- * - 已经过的（弹过的区域、休止符）→ 浅豆沙绿
- * - 弹对的音符 → 豆蔻绿
- * - 弹错的音符 → 锗黄
+ * - 已经过的（弹过的区域、休止符）→ 暖米灰
+ * - 弹对的音符 → 低饱和绿
+ * - 弹错的音符 → 低饱和砖红
+ * - 当前音 → 金色高亮
  *
- * 颜色默认取 tokens.css 里的 CSS 变量，便于跟随明暗主题。
+ * 颜色默认取 tokens.css 里的 CSS 变量，便于跟随主题；
+ * 下面的回退值只在拿不到 CSS（测试 / SSR）时使用，与暖白卡内配色一致。
  */
-const FALLBACK_PLAYED = "#dce8d5";
-const FALLBACK_CORRECT = "#a3c78a";
-const FALLBACK_WRONG = "#e2b13c";
-const FALLBACK_ACTIVE = "#c9842a";
+const FALLBACK_PLAYED = "#efe9dc";
+const FALLBACK_CORRECT = "#a9bfa0";
+const FALLBACK_WRONG = "#b96a55";
+const FALLBACK_ACTIVE = "#c9a45c";
 
 export type ScorePaintState = {
   /** 已弹奏（被消费）的发声音数量，即游标位置。 */

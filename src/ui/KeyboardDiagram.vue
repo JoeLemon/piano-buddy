@@ -193,7 +193,7 @@ function isActiveFinger(side: Hand, digit: number): boolean {
   box-sizing: border-box;
   position: relative;
   background: var(--pb-key-white);
-  border: 1px solid var(--pb-border);
+  border: 1px solid var(--pb-key-gap);
   border-radius: 0 0 4px 4px;
   box-shadow: inset 0 -2px 0 rgb(0 0 0 / 12%);
 }
@@ -209,18 +209,27 @@ function isActiveFinger(side: Hand, digit: number): boolean {
   height: 74px;
   box-sizing: border-box;
   background: var(--pb-key-black);
-  border: 1px solid var(--pb-border);
+  border: 1px solid var(--pb-key-gap);
   border-radius: 0 0 3px 3px;
   box-shadow: inset 0 -2px 0 rgb(0 0 0 / 35%);
   pointer-events: none;
 }
 
-.white-key.is-target,
-.black-key.is-target {
-  background: var(--pb-accent);
+/* 按压态用金色系：白键浅金、黑键深金，键帽文字同步转深绿保证可读 */
+.white-key.is-target {
+  background: var(--pb-accent-2);
 }
 
-/* 模拟键盘模式的键位标注：显示每个音对应的电脑键帽。 */
+.black-key.is-target {
+  background: var(--pb-accent-2-strong);
+}
+
+.white-key.is-target .key-cap,
+.black-key.is-target .key-cap {
+  color: var(--pb-accent-text);
+}
+
+/* 模拟键盘模式的键位标注：白键深灰绿，黑键亮金（规范 §4.5） */
 .white-key .key-cap {
   position: absolute;
   top: 3px;
@@ -228,7 +237,7 @@ function isActiveFinger(side: Hand, digit: number): boolean {
   transform: translateX(-50%);
   font-size: 0.6rem;
   line-height: 1;
-  color: var(--pb-muted);
+  color: var(--pb-key-cap);
 }
 
 .black-key .key-cap {
@@ -239,7 +248,7 @@ function isActiveFinger(side: Hand, digit: number): boolean {
   font-size: 0.55rem;
   line-height: 1;
   font-weight: 600;
-  color: var(--pb-key-white);
+  color: var(--pb-accent-2-strong);
 }
 
 /* 两只手：SVG 手形图，从玩家侧伸出搭在琴键上。手宽与 5 个白键严格一致，
@@ -284,9 +293,10 @@ function isActiveFinger(side: Hand, digit: number): boolean {
   user-select: none;
 }
 
+/* 当前手指：跟随「当前音」的金色语言，与按下的琴键同色系 */
 .finger.is-active .finger-shape {
-  fill: var(--pb-accent);
-  stroke: var(--pb-accent);
+  fill: var(--pb-accent-2);
+  stroke: var(--pb-accent-2);
 }
 
 .finger.is-active .finger-label {

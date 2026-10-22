@@ -40,6 +40,10 @@ export type Profile = {
   lastSeed: number;
   seenReadingTips: boolean;
   seenSightTips: boolean;
+  /** 已完成的 L3 预备课 id；只表示上过课，不等于技能已过关。 */
+  l3PrepCompleted: string[];
+  /** 已通过的主线闯关关卡 id；只记录关卡完成度。 */
+  curriculumCompleted: string[];
 };
 
 export function initialProfile(): Profile {
@@ -63,6 +67,8 @@ export function initialProfile(): Profile {
     lastSeed: 1,
     seenReadingTips: false,
     seenSightTips: false,
+    l3PrepCompleted: [],
+    curriculumCompleted: [],
   };
 }
 
@@ -82,6 +88,30 @@ export function mergeProfile(stored: Partial<Profile> | null | undefined): Profi
     l2Passed: stored.l2Passed ?? false,
     l2FailStreak: stored.l2FailStreak ?? 0,
     l2Slowed: stored.l2Slowed ?? false,
+    l3PrepCompleted: Array.isArray(stored.l3PrepCompleted)
+      ? [...new Set(stored.l3PrepCompleted.filter((id): id is string => typeof id === "string"))]
+      : [],
+    curriculumCompleted: Array.isArray(stored.curriculumCompleted)
+      ? [...new Set(stored.curriculumCompleted.filter((id): id is string => typeof id === "string"))]
+      : [],
+  };
+}
+
+/** 记录一节 L3 预备课完成；只写“上过”，不写技能 passed。 */
+export function completeL3PrepLesson(profile: Profile, lessonId: string): Profile {
+  if (!lessonId || profile.l3PrepCompleted.includes(lessonId)) return profile;
+  return {
+    ...profile,
+    l3PrepCompleted: [...profile.l3PrepCompleted, lessonId],
+  };
+}
+
+/** 记录一个主线关卡通过；重复通过保持幂等。 */
+export function completeCurriculumStage(profile: Profile, stageId: string): Profile {
+  if (!stageId || profile.curriculumCompleted.includes(stageId)) return profile;
+  return {
+    ...profile,
+    curriculumCompleted: [...profile.curriculumCompleted, stageId],
   };
 }
 

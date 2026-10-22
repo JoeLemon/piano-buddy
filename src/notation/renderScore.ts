@@ -20,6 +20,25 @@ const VEX_DURATION: Record<Duration, string> = {
   "16r": "16/r",
 };
 
+/** 按小节数估算自然的横向宽度：第一小节带谱号/调号，宽一些。 */
+function naturalWidth(measureCount: number, gap: number): number {
+  if (measureCount <= 0) return 0;
+  const first = 360;
+  const rest = (measureCount - 1) * 240;
+  return 20 + first + rest + gap * (measureCount - 1);
+}
+
+/**
+ * 谱面原本是固定宽度，三小节就超出卡片、出现横向滚动条。
+ * 按容器可视宽度等比压缩；窄屏最多压到 0.72，再窄就保留滚动，
+ * 免得音符挤成一团。
+ */
+function fitScale(element: HTMLElement, natural: number): number {
+  const available = element.clientWidth;
+  if (!available || available <= 0 || natural <= 0) return 1;
+  return Math.min(1, Math.max(0.72, (available - 6) / natural));
+}
+
 /** White-key MIDI numbers from C3 through C5. Middle C is C4 (60). */
 export function whiteKeyMidis(): number[] {
   const midis: number[] = [];
@@ -57,11 +76,13 @@ export function renderScore(element: HTMLElement, score: Score, hand: Hand, show
   element.append(host);
 
   const gap = 12;
+  const natural = naturalWidth(stave.measures.length, gap);
+  const scale = fitScale(element, natural);
   let cursor = 10;
   const placements = stave.measures.map((_, index) => {
-    const width = index === 0 ? 360 : 240;
+    const width = (index === 0 ? 360 : 240) * scale;
     const placement = { x: cursor, width };
-    cursor += width + gap;
+    cursor += width + gap * scale;
     return placement;
   });
 
@@ -92,6 +113,7 @@ export function renderScore(element: HTMLElement, score: Score, hand: Hand, show
 
   factory.draw();
   styleFingerAnnotations(host);
+  trimCanvas(host);
 }
 
 /** Treble on top, bass below. `score.hands` must include both RH and LH. */
@@ -113,11 +135,13 @@ export function renderGrandScore(element: HTMLElement, score: Score, showFingers
   element.append(host);
 
   const gap = 12;
+  const natural = naturalWidth(measureCount, gap);
+  const scale = fitScale(element, natural);
   let cursor = 28;
   const placements = Array.from({ length: measureCount }, (_, index) => {
-    const width = index === 0 ? 360 : 240;
+    const width = (index === 0 ? 360 : 240) * scale;
     const placement = { x: cursor, width };
-    cursor += width + gap;
+    cursor += width + gap * scale;
     return placement;
   });
 
@@ -158,13 +182,15 @@ export function renderGrandScore(element: HTMLElement, score: Score, showFingers
     if (index === 0) {
       treble.addClef(right.clef).addTimeSignature(time).addKeySignature(score.keySignature);
       bass.addClef(left.clef).addTimeSignature(time).addKeySignature(score.keySignature);
+      // 大括号只在这一行的开头出现一次，逐小节重复会看成四个独立谱表
+      system.addConnector("brace");
+      system.addConnector("singleLeft");
     }
-    system.addConnector("brace");
-    system.addConnector("singleLeft");
   }
 
   factory.draw();
   styleFingerAnnotations(host);
+  trimCanvas(host);
 }
 
 function openVoice(factory: Factory, notes: StemmableNote[], time: string) {
@@ -194,11 +220,46 @@ function styleFingerAnnotations(host: HTMLElement): void {
   for (let index = 0; index < texts.length; index += 1) {
     const node = texts.item(index);
     if (!(node instanceof SVGElement)) continue;
-    node.setAttribute("fill", "#1a2332");
+    // 与 tokens.css 的 --pb-score-ink 一致：谱面上的文字只用近黑色
+    node.setAttribute("fill", "#1a1a1a");
     if (node instanceof SVGTextElement) {
       node.setAttribute("font-size", "14");
       node.setAttribute("font-weight", "600");
     }
+  }
+}
+
+/**
+ * 谱面画布留了固定高度（单手 280 / 双手 420）并在顶部预留 y=48~90，
+ * 实际内容只占中间一条，卡片里就拖出上下两大块空白。
+ * 画完后按内容包围盒裁掉上下多余部分，各留 8px 余量。
+ *
+ * 注意 VexFlow 同时写了 viewBox、height 属性和内联 style，只改一个会被
+ * 另一个按比例缩放回来（谱面会变小并居中），所以三处一起改。
+ * happy-dom 没有 getBBox，取不到就保留原高度，测试不受影响。
+ */
+function trimCanvas(host: HTMLElement): void {
+  const svg = host.querySelector("svg");
+  if (!(svg instanceof SVGSVGElement)) return;
+  try {
+    const box = svg.getBBox();
+    if (!Number.isFinite(box.height) || box.height <= 0) return;
+    const viewBox = svg.getAttribute("viewBox")?.split(/\s+/).map(Number);
+    const currentHeight = viewBox?.[3] ?? Number(svg.getAttribute("height") ?? 0);
+    if (!Number.isFinite(currentHeight) || currentHeight <= 0) return;
+
+    const pad = 12;
+    const top = Math.max(0, Math.floor(box.y - pad));
+    const bottom = Math.ceil(box.y + box.height + pad);
+    const height = bottom - top;
+    if (height <= 0 || height >= currentHeight) return;
+
+    const viewBoxWidth = viewBox?.[2] ?? Number(svg.getAttribute("width") ?? 0);
+    svg.setAttribute("viewBox", `0 ${top} ${viewBoxWidth} ${height}`);
+    svg.setAttribute("height", String(height));
+    svg.style.height = `${height}px`;
+  } catch {
+    // 没有布局引擎（测试环境）时保持原样
   }
 }
 

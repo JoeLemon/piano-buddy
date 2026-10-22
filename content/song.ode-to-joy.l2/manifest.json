@@ -1,0 +1,33 @@
+{
+  "schemaVersion": 1,
+  "id": "pkg.ode-to-joy.simple",
+  "songId": "song.ode-to-joy",
+  "arrangementId": "arr.ode-to-joy.simple",
+  "songTitle": "欢乐颂",
+  "composer": "Ludwig van Beethoven",
+  "name": "欢乐颂 · L2 编配",
+  "type": "song",
+  "version": "1.0.0",
+  "minAppVersion": "2.0.0",
+  "skillDeps": [
+    "clef.treble",
+    "clef.bass",
+    "pos.five",
+    "rhythm.quarter",
+    "key.c",
+    "hands.both",
+    "hands.together"
+  ],
+  "difficulty": {
+    "level": 2,
+    "bpm": 80,
+    "repeat": 0.3,
+    "len": 8
+  },
+  "assets": ["content/score.json"],
+  "license": "public-domain",
+  "rights": {
+    "type": "public-domain",
+    "attribution": "Ludwig van Beethoven (public domain)"
+  }
+}

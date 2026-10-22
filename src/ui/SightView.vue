@@ -32,11 +32,7 @@ import { renderGrandScore, renderScore } from "../notation/renderScore";
 import ScoreProgress from "./ScoreProgress.vue";
 
 const PREPARE_SECONDS = 25;
-const SIGHT_TIPS = [
-  "不要弹错就停下来反复重弹。",
-  "每条新谱最多练习 2 遍。",
-  "视奏目标不是弹完美，是持续读谱。",
-];
+const SIGHT_TIPS = ["弹错不要停，每条最多 2 遍。"];
 
 const props = defineProps<{
   profile: Profile;
@@ -48,7 +44,6 @@ type SightTarget = { key: string; midi: number };
 
 const emit = defineEmits<{
   "update-profile": [profile: Profile];
-  "connect-midi": [];
   finished: [payload: {
     score: Score;
     result: ReturnType<typeof compare>;
@@ -491,7 +486,7 @@ function lineMs(current: Score, tempo: number): number {
 
 <template>
   <div
-    class="surface"
+    class="surface sight"
     :data-score-id="score?.id ?? ''"
     data-mode="sight"
     :data-preparing="preparing ? 'true' : 'false'"
@@ -502,23 +497,27 @@ function lineMs(current: Score, tempo: number): number {
         知道了
       </button>
     </div>
-    <div v-if="!midiConnected" class="connect-prompt">
-      <p class="warn" data-test="midi-wait">连接后才会开始准备。请先连接蓝牙或 USB MIDI 键盘。</p>
-      <button type="button" class="connect" data-test="connect-midi" @click="emit('connect-midi')">
-        连接 MIDI 键盘
-      </button>
-    </div>
-    <p class="remind">眼睛尽量保持看谱，不要盯着键盘</p>
-    <p v-if="phase === 'prepare'" class="card">
-      先不要动手。看看调号、拍号，左右手大概在哪一块，心里数一下节奏。
+
+    <p v-if="!midiConnected" class="warn" data-test="midi-wait">
+      连接后才会开始准备。请连接 MIDI 键盘（右上角）。
     </p>
-    <p
-      v-if="phase === 'prepare' && midiConnected && !showTips"
-      data-test="countdown"
-      class="count"
-    >
-      {{ secondsLeft }}
-    </p>
+
+    <!-- 上：当前阶段。只放倒计时和剩余遍数，不再和一堆开关抢位置 -->
+    <header class="sight-head">
+      <div class="head-text">
+        <p v-if="phase === 'prepare' && score" class="remaining" data-test="sight-remaining">
+          这条还能练 {{ remainingPlays }} 遍
+        </p>
+        <p v-else class="remaining">{{ phase === "prepare" ? "" : "别停下，弹错也继续往下读。" }}</p>
+      </div>
+      <p
+        v-if="phase === 'prepare' && midiConnected && !showTips"
+        data-test="countdown"
+        class="count"
+      >
+        {{ secondsLeft }}
+      </p>
+    </header>
     <div
       v-if="phase === 'prepare' && midiConnected && !showTips"
       class="prepare-bar"
@@ -530,60 +529,12 @@ function lineMs(current: Score, tempo: number): number {
     >
       <div class="prepare-fill" :style="{ width: `${preparePercent}%` }"></div>
     </div>
-    <p v-if="phase === 'prepare' && !midiConnected" class="count muted">—</p>
-    <p v-if="phase === 'prepare' && score" class="remaining" data-test="sight-remaining">
-      这条还能练 {{ remainingPlays }} 遍
+
+    <p v-if="phase === 'prepare'" class="card">
+      先不要动手。看看调号、拍号，左右手大概在哪一块，心里数一下节奏。
     </p>
-    <div v-if="handChooser" class="hands">
-      <button
-        type="button"
-        data-test="hand-rh"
-        :aria-pressed="hand === 'RH' ? 'true' : 'false'"
-        @click="chooseHand('RH')"
-      >
-        右手
-      </button>
-      <button
-        type="button"
-        data-test="hand-lh"
-        :aria-pressed="hand === 'LH' ? 'true' : 'false'"
-        @click="chooseHand('LH')"
-      >
-        左手
-      </button>
-    </div>
-    <p v-else class="hand" data-test="sight-hand">{{ handLabel }}</p>
-    <div class="fingers">
-      <button
-        type="button"
-        data-test="show-fingers"
-        :aria-pressed="showFingers ? 'true' : 'false'"
-        @click="showFingers = true"
-      >
-        显示指法
-      </button>
-      <button
-        type="button"
-        data-test="hide-fingers"
-        :aria-pressed="showFingers ? 'false' : 'true'"
-        @click="showFingers = false"
-      >
-        隐藏指法（自测模式）
-      </button>
-    </div>
-    <label class="tempo">
-      速度
-      <input
-        data-test="bpm"
-        type="range"
-        min="40"
-        max="120"
-        :value="bpm"
-        :disabled="tempoLocked()"
-        @input="onBpm"
-      />
-      <span>{{ bpm }}</span>
-    </label>
+
+    <!-- 中：谱面是主角，先给足宽度 -->
     <div ref="staffEl" class="staff"></div>
     <ScoreProgress
       v-if="score"
@@ -591,9 +542,74 @@ function lineMs(current: Score, tempo: number): number {
       :label="measureLabel"
       :measures="measureCount"
     />
-    <button v-if="phase === 'prepare'" type="button" class="primary" data-test="preview" @click="listen">
-      听一遍
-    </button>
+
+    <!-- 下：控制条。手 / 指法 / 速度 / 试听都收在这一行里 -->
+    <div class="controls">
+      <div class="control-row">
+        <span class="control-label">手</span>
+        <div v-if="handChooser" class="segments">
+          <button
+            type="button"
+            data-test="hand-rh"
+            :aria-pressed="hand === 'RH' ? 'true' : 'false'"
+            @click="chooseHand('RH')"
+          >
+            右手
+          </button>
+          <button
+            type="button"
+            data-test="hand-lh"
+            :aria-pressed="hand === 'LH' ? 'true' : 'false'"
+            @click="chooseHand('LH')"
+          >
+            左手
+          </button>
+        </div>
+        <p v-else class="hand" data-test="sight-hand">{{ handLabel }}</p>
+      </div>
+
+      <div class="control-row">
+        <span class="control-label">指法</span>
+        <div class="segments">
+          <button
+            type="button"
+            data-test="show-fingers"
+            :aria-pressed="showFingers ? 'true' : 'false'"
+            @click="showFingers = true"
+          >
+            显示指法
+          </button>
+          <button
+            type="button"
+            data-test="hide-fingers"
+            :aria-pressed="showFingers ? 'false' : 'true'"
+            @click="showFingers = false"
+          >
+            隐藏指法（自测模式）
+          </button>
+        </div>
+      </div>
+
+      <label class="control-row tempo">
+        <span class="control-label">速度</span>
+        <input
+          data-test="bpm"
+          type="range"
+          min="40"
+          max="120"
+          :value="bpm"
+          :disabled="tempoLocked()"
+          @input="onBpm"
+        />
+        <span class="tempo-value">{{ bpm }}</span>
+      </label>
+
+      <button v-if="phase === 'prepare'" type="button" class="primary preview" data-test="preview" @click="listen">
+        听一遍
+      </button>
+    </div>
+
+    <p class="remind">眼睛尽量保持看谱，不要盯着键盘</p>
   </div>
 </template>
 
@@ -601,8 +617,6 @@ function lineMs(current: Score, tempo: number): number {
 .warn,
 .remind,
 .card,
-.hand,
-.tempo,
 .tips p {
   margin: 0 0 0.85rem;
   line-height: 1.5;
@@ -612,107 +626,135 @@ function lineMs(current: Score, tempo: number): number {
   color: var(--pb-warn);
 }
 
-.remind,
+.remind {
+  margin: 0.6rem 0 0;
+  color: var(--pb-muted);
+  font-size: 0.85rem;
+}
+
 .card,
-.hand,
 .tips p {
   color: var(--pb-muted);
 }
 
+/* 阶段区：左边说明、右边倒计时，倒计时是准备阶段唯一的视觉焦点 */
+.sight-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--pb-space-4);
+}
+
+.head-text .eyebrow {
+  margin-bottom: 0.1rem;
+}
+
 .count {
-  margin: 0 0 1rem;
+  margin: 0;
   font-family: var(--pb-font-display);
-  font-size: 1.75rem;
+  font-size: 2rem;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
 }
 
 .count.muted {
   color: var(--pb-muted);
 }
 
+.remaining {
+  min-height: 1.2rem;
+  margin: 0;
+  color: var(--pb-muted);
+  font-size: 0.85rem;
+}
+
 .prepare-bar {
   height: 0.3rem;
-  margin: -0.4rem 0 0.85rem;
-  border-radius: 999px;
-  background: var(--pb-scrollbar-track, rgb(42 51 68 / 12%));
+  margin: 0.65rem 0 0.85rem;
+  border-radius: var(--pb-radius-pill);
+  background: var(--pb-surface-2);
   overflow: hidden;
 }
 
 .prepare-fill {
   height: 100%;
-  border-radius: 999px;
-  background: var(--pb-accent);
+  border-radius: var(--pb-radius-pill);
+  background: var(--pb-accent-2);
   transition: width 1s linear;
 }
 
-.remaining {
-  margin: 0 0 0.85rem;
-  color: var(--pb-muted);
-  font-size: 0.9rem;
-}
-
 .tips {
-  margin: 0 0 1rem;
-  padding: 0.9rem 1rem;
+  margin: 0 0 var(--pb-space-4);
+  padding: var(--pb-space-3) var(--pb-space-4);
   border: 1px solid var(--pb-border-soft);
   border-radius: var(--pb-radius);
   background: var(--pb-tip-bg);
 }
 
-.hands,
-.fingers,
-.tempo {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.5rem;
-  align-items: center;
-  margin-bottom: 0.85rem;
-}
-
-.tempo {
-  color: var(--pb-muted);
-}
-
-.tempo input {
-  flex: 1;
-  min-width: 8rem;
-}
-
-button {
-  padding: 0.55rem 0.9rem;
-  border: 1px solid var(--pb-border);
-  border-radius: var(--pb-radius);
-  background: var(--pb-surface);
-  color: var(--pb-ink);
-  cursor: pointer;
-}
-
-button[aria-pressed="true"],
-.primary {
-  background: var(--pb-accent);
-  border-color: var(--pb-accent);
-  color: var(--pb-accent-text);
-}
-
 .staff {
   overflow-x: auto;
-  margin: 0 0 0.6rem;
+  margin: var(--pb-space-2) 0 var(--pb-space-3);
   scrollbar-width: thin;
 }
 
-.connect-prompt {
-  margin: 0 0 1rem;
-}
-
-.connect-prompt .warn {
-  margin-bottom: 0.5rem;
-}
-
-.connect {
-  padding: 0.55rem 0.9rem;
-  border: 1px solid var(--pb-accent);
+/* 控制条：一行放得下就不换行，窄屏自动折成两行 */
+.controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--pb-space-2) var(--pb-space-4);
+  margin: var(--pb-space-2) 0 0;
+  padding: var(--pb-space-2) var(--pb-space-3);
+  border: 1px solid var(--pb-border-soft);
   border-radius: var(--pb-radius);
-  background: var(--pb-accent);
+  background: var(--pb-surface-2);
+}
+
+.control-row {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  margin: 0;
+}
+
+.control-label {
+  color: var(--pb-muted);
+  font-size: 0.76rem;
+  letter-spacing: 0.04em;
+}
+
+.tempo input {
+  width: clamp(5rem, 14vw, 9rem);
+}
+
+.tempo-value {
+  min-width: 2ch;
+  color: var(--pb-ink);
+  font-size: 0.82rem;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+
+.hand {
+  margin: 0;
+  color: var(--pb-ink-2);
+  font-size: 0.88rem;
+  font-weight: 600;
+}
+
+.primary {
+  padding: 0.5rem 1rem;
+  border: 1px solid var(--pb-accent-2);
+  border-radius: var(--pb-radius);
+  background: var(--pb-accent-2);
   color: var(--pb-accent-text);
+  font-size: 0.9rem;
+  font-weight: 600;
   cursor: pointer;
 }
+
+.preview {
+  margin-left: auto;
+}
+
 </style>

@@ -20,7 +20,6 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   next: [];
-  home: [];
   "retry-error": [];
 }>();
 
@@ -89,7 +88,6 @@ function draw() {
       >
         练这条错题
       </button>
-      <button type="button" data-test="review-home" @click="emit('home')">回首页</button>
     </div>
   </div>
 </template>
@@ -169,8 +167,8 @@ button {
 }
 
 .primary {
-  background: var(--pb-accent);
-  border-color: var(--pb-accent);
+  background: var(--pb-accent-2);
+  border-color: var(--pb-accent-2);
   color: var(--pb-accent-text);
 }
 </style>

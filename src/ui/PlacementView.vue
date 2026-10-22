@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { reactive, ref } from "vue";
+import { computed, reactive, ref } from "vue";
 import type { Assessment } from "../domain/profile";
 
 const emit = defineEmits<{
@@ -20,97 +20,139 @@ const answers = reactive<Record<keyof Assessment, boolean | null>>({
 
 const showMissing = ref(false);
 
+const complete = computed(() => questions.every((question) => answers[question.key] !== null));
+
 function choose(key: keyof Assessment, value: boolean) {
   answers[key] = value;
 }
 
 function submit() {
-  if (answers.knowsTreble === null || answers.knowsBass === null || answers.keepsPulse === null) {
+  if (!complete.value) {
     showMissing.value = true;
     return;
   }
   showMissing.value = false;
   emit("submit", {
-    knowsTreble: answers.knowsTreble,
-    knowsBass: answers.knowsBass,
-    keepsPulse: answers.keepsPulse,
+    knowsTreble: answers.knowsTreble as boolean,
+    knowsBass: answers.knowsBass as boolean,
+    keepsPulse: answers.keepsPulse as boolean,
   });
 }
 </script>
 
 <template>
-  <div class="surface">
-    <h1>三道自评</h1>
-    <p class="lead">只用来决定从哪一课开始，不会直接打开视奏。</p>
-    <fieldset v-for="question in questions" :key="question.key">
-      <legend>{{ question.prompt }}</legend>
-      <button
-        type="button"
-        :data-test="`${question.key}-yes`"
-        :aria-pressed="answers[question.key] === true"
-        @click="choose(question.key, true)"
-      >
-        会
-      </button>
-      <button
-        type="button"
-        :data-test="`${question.key}-no`"
-        :aria-pressed="answers[question.key] === false"
-        @click="choose(question.key, false)"
-      >
-        还不会
-      </button>
-    </fieldset>
-    <p v-if="showMissing" class="note">三道都要选。</p>
-    <button type="button" class="primary" data-test="submit" @click="submit">提交</button>
+  <div class="surface placement">
+    <header>
+      <h1>三道自评</h1>
+      <p class="lead">只决定从哪一课开始，不会直接打开视奏。</p>
+    </header>
+
+    <ol class="questions">
+      <li v-for="question in questions" :key="question.key" class="question">
+        <p class="q-prompt">{{ question.prompt }}</p>
+        <div class="segments" role="group" :aria-label="question.prompt">
+          <button
+            type="button"
+            :data-test="`${question.key}-yes`"
+            :aria-pressed="answers[question.key] === true"
+            @click="choose(question.key, true)"
+          >
+            会
+          </button>
+          <button
+            type="button"
+            :data-test="`${question.key}-no`"
+            :aria-pressed="answers[question.key] === false"
+            @click="choose(question.key, false)"
+          >
+            还不会
+          </button>
+        </div>
+      </li>
+    </ol>
+
+    <footer class="foot">
+      <p v-if="showMissing" class="note warn">三道都要选。</p>
+      <button type="button" class="primary" data-test="submit" @click="submit">提交</button>
+    </footer>
   </div>
 </template>
 
 <style scoped>
-h1 {
-  margin: 0 0 0.5rem;
-  font-family: var(--pb-font-display);
-  font-size: 1.85rem;
+.placement {
+  display: flex;
+  flex-direction: column;
+  gap: var(--pb-space-4);
+}
+
+header h1 {
+  margin: 0 0 var(--pb-space-2);
+}
+
+header .lead {
+  margin: 0;
+}
+
+.questions {
+  display: grid;
+  gap: var(--pb-space-3);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* 宽屏三题并排：三道题一眼看全，不用上下扫 */
+@media (min-width: 760px) {
+  .questions {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+.question {
+  display: flex;
+  flex-direction: column;
+  gap: var(--pb-space-2);
+  padding: var(--pb-space-4);
+  border: 1px solid var(--pb-border-soft);
+  border-radius: var(--pb-radius);
+  background: var(--pb-surface);
+}
+
+.q-prompt {
+  margin: 0;
   font-weight: 600;
 }
 
-.lead,
-.note {
-  margin: 0 0 1rem;
-  color: var(--pb-muted);
+/* 分段控件贴着内容宽度，并压到卡片底部，三张卡的按钮横向对齐 */
+.question .segments {
+  align-self: flex-start;
 }
 
-fieldset {
-  margin: 0 0 1rem;
-  padding: 0;
-  border: 0;
+.foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--pb-space-2) var(--pb-space-3);
+  padding-top: var(--pb-space-2);
 }
 
-legend {
-  margin-bottom: 0.5rem;
-  padding: 0;
+.foot .note {
+  margin: 0;
+  margin-right: auto;
 }
 
-fieldset button,
+.warn {
+  color: var(--pb-warn);
+}
+
 .primary {
-  margin: 0 0.5rem 0 0;
-  padding: 0.55rem 0.9rem;
-  border: 1px solid var(--pb-border);
+  padding: 0.6rem 1.2rem;
+  border: 1px solid var(--pb-accent-2);
   border-radius: var(--pb-radius);
-  background: var(--pb-surface);
-  color: var(--pb-ink);
-  cursor: pointer;
-}
-
-button[aria-pressed="true"],
-.primary {
-  background: var(--pb-accent);
-  border-color: var(--pb-accent);
+  background: var(--pb-accent-2);
   color: var(--pb-accent-text);
-}
-
-.primary {
-  display: block;
-  margin-top: 0.25rem;
+  font-weight: 600;
+  cursor: pointer;
 }
 </style>

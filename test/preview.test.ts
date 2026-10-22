@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { previewScore, startMetronome } from "../src/audio/preview";
+import { createPreviewPlayer, previewScore, startMetronome } from "../src/audio/preview";
 import { generateL1 } from "../src/domain/generate";
 import type { Score } from "../src/domain/types";
 
@@ -231,6 +231,91 @@ function installPlainAudioContext() {
     }
   };
 }
+
+describe("createPreviewPlayer", () => {
+  it("pauses, seeks and resumes without replaying earlier notes", () => {
+    vi.useFakeTimers();
+    installPlainAudioContext();
+    const seen: number[] = [];
+    let ended = 0;
+    const player = createPreviewPlayer(lineWithRest, "RH", 60, {
+      onNote: (index) => seen.push(index),
+      onEnd: () => {
+        ended += 1;
+      },
+    });
+
+    try {
+      expect(player.totalBeats).toBe(4);
+      player.play();
+      vi.advanceTimersByTime(60);
+      expect(seen).toEqual([0]);
+
+      player.pause();
+      expect(player.playing).toBe(false);
+      expect(player.positionBeats).toBeGreaterThan(0);
+      vi.advanceTimersByTime(20000);
+      expect(seen).toEqual([0]);
+      expect(ended).toBe(0);
+
+      player.seek(2);
+      expect(player.positionBeats).toBe(2);
+      player.play();
+      vi.advanceTimersByTime(60);
+      expect(seen).toEqual([0, 1]);
+
+      vi.advanceTimersByTime(2100);
+      expect(ended).toBe(1);
+    } finally {
+      player.stop();
+    }
+  });
+
+  it("applies speed before playback and switches hands", () => {
+    vi.useFakeTimers();
+    installPlainAudioContext();
+    const seen: number[] = [];
+    const player = createPreviewPlayer(lineWithRest, "RH", 60, {
+      onNote: (index) => seen.push(index),
+    });
+
+    try {
+      player.setSpeed(2);
+      player.play();
+      vi.advanceTimersByTime(1100);
+      expect(seen).toEqual([0, 1]);
+    } finally {
+      player.stop();
+    }
+
+    const twoHands: Score = {
+      ...oneNote,
+      hands: ["RH", "LH"],
+      staves: {
+        RH: oneNote.staves.RH!,
+        LH: {
+          clef: "bass",
+          measures: [
+            {
+              notes: [
+                {
+                  id: "lh",
+                  pitches: [{ step: "C", octave: 3, alteration: 0 }],
+                  duration: "w",
+                },
+              ],
+            },
+          ],
+        },
+      },
+    };
+    const handPlayer = createPreviewPlayer(twoHands, "RH", 60);
+    expect(handPlayer.totalBeats).toBe(1);
+    handPlayer.setHand("LH");
+    expect(handPlayer.totalBeats).toBe(4);
+    handPlayer.stop();
+  });
+});
 
 describe("previewScore progress", () => {
   it("reports every sounding note in order and then the end", () => {

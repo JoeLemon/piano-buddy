@@ -1,0 +1,82 @@
+{
+  "version": 1,
+  "songs": [
+    {
+      "songId": "song.ode-to-joy",
+      "title": "欢乐颂",
+      "composer": "Ludwig van Beethoven",
+      "arrangements": [
+        {
+          "arrangementId": "arr.ode-to-joy.simple",
+          "packageId": "pkg.ode-to-joy.simple",
+          "name": "欢乐颂 · L2 编配",
+          "level": 2,
+          "label": "L2+",
+          "bpm": 80,
+          "measures": 8,
+          "skillDeps": [
+            "clef.bass",
+            "clef.treble",
+            "hands.both",
+            "hands.together",
+            "key.c",
+            "pos.five",
+            "rhythm.quarter"
+          ],
+          "rights": {
+            "type": "public-domain",
+            "attribution": "Ludwig van Beethoven (public domain)"
+          }
+        },
+        {
+          "arrangementId": "arr.ode-to-joy.standard",
+          "packageId": "pkg.ode-to-joy.standard",
+          "name": "欢乐颂 · L3 编配",
+          "level": 3,
+          "label": "L3+",
+          "bpm": 72,
+          "measures": 8,
+          "skillDeps": [
+            "chord.progression",
+            "chord.triad",
+            "clef.bass",
+            "clef.treble",
+            "hands.both",
+            "hands.together",
+            "key.c",
+            "pos.five",
+            "pos.shift",
+            "rhythm.quarter"
+          ],
+          "rights": {
+            "type": "public-domain",
+            "attribution": "Ludwig van Beethoven (public domain)"
+          }
+        },
+        {
+          "arrangementId": "arr.ode-to-joy.full",
+          "packageId": "pkg.ode-to-joy.full",
+          "name": "欢乐颂 · L4 编配",
+          "level": 4,
+          "label": "L4+",
+          "bpm": 68,
+          "measures": 8,
+          "skillDeps": [
+            "clef.bass",
+            "clef.treble",
+            "hands.both",
+            "hands.together",
+            "key.c",
+            "pos.five",
+            "rhythm.eighth",
+            "texture.broken"
+          ],
+          "rights": {
+            "type": "public-domain",
+            "attribution": "Ludwig van Beethoven (public domain)"
+          }
+        }
+      ]
+    }
+  ]
+}

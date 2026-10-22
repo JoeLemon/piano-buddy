@@ -45,15 +45,30 @@ import AppShell from "./ui/AppShell.vue";
 import HomeView from "./ui/HomeView.vue";
 import PlacementView from "./ui/PlacementView.vue";
 import L2ReadingView from "./ui/L2ReadingView.vue";
+import L3PrepView from "./ui/L3PrepView.vue";
+import PracticeView from "./ui/PracticeView.vue";
 import ReadingView from "./ui/ReadingView.vue";
+import RepertoireView from "./ui/RepertoireView.vue";
 import ReviewView from "./ui/ReviewView.vue";
 import SightView from "./ui/SightView.vue";
 import ScoreProgress from "./ui/ScoreProgress.vue";
 
-type Screen = "loading" | "home" | "placement" | "reading" | "sight" | "review" | "test";
+type Screen =
+  | "loading"
+  | "home"
+  | "placement"
+  | "reading"
+  | "sight"
+  | "repertoire"
+  | "practice"
+  | "l3"
+  | "review"
+  | "test";
 
 const profile = ref<Profile>(initialProfile());
 const screen = ref<Screen>("loading");
+/** 乐理页的初始模式：首页「主线闯关」直接进关卡，其余入口进自由练习。 */
+const practiceMode = ref<"free" | "stages">("free");
 const webMidiConnected = ref(false);
 const bleDevice = ref<string | null>(null);
 const midiError = ref<string | null>(null);
@@ -102,13 +117,19 @@ const shellTitle = computed(() => {
     case "home":
       return undefined;
     case "placement":
-      return undefined;
+      return "自评";
     case "reading":
       return "识谱";
     case "sight":
       return "视奏";
+    case "repertoire":
+      return "选一首曲子";
+    case "practice":
+      return "乐理练习";
+    case "l3":
+      return "L3 预备课";
     case "review":
-      return undefined;
+      return "复盘";
     case "test":
       return "过关测试";
     default:
@@ -116,9 +137,88 @@ const shellTitle = computed(() => {
   }
 });
 
+/** 面包屑里的上一级：让用户始终知道自己站在哪个分区。首页不带分区，直接显示品牌。 */
+const shellSection = computed(() => {
+  switch (screen.value) {
+    case "home":
+    case "placement":
+      return undefined;
+    case "reading":
+    case "sight":
+    case "review":
+    case "test":
+    case "l3":
+      return "课程";
+    case "repertoire":
+      return "曲库";
+    case "practice":
+      return "乐理";
+    default:
+      return undefined;
+  }
+});
+
+/** 这些页面自己带 h1（三道自评 / 选一首曲子 / 复盘），壳就不再重复出一行标题。 */
+const shellShowHeading = computed(
+  () => screen.value !== "placement"
+    && screen.value !== "repertoire"
+    && screen.value !== "review",
+);
+
+const NAV_SECTIONS = [
+  { id: "today", label: "今日" },
+  { id: "course", label: "课程" },
+  { id: "library", label: "曲库" },
+  { id: "theory", label: "乐理" },
+] as const;
+
+const activeSection = computed(() => {
+  switch (screen.value) {
+    case "home":
+    case "placement":
+      return "today";
+    case "repertoire":
+      return "library";
+    case "practice":
+      return "theory";
+    default:
+      return "course";
+  }
+});
+
+/** 识别谱、视奏、过关、复盘属于「沉浸模式」：藏掉导航，避免误点走开。 */
+const navSections = computed(() => {
+  const immersive = screen.value === "reading"
+    || screen.value === "sight"
+    || screen.value === "test"
+    || screen.value === "review";
+  return immersive ? [] : NAV_SECTIONS;
+});
+
+function onNavigate(id: string) {
+  if (id === "today") {
+    goHome();
+    return;
+  }
+  if (id === "course") {
+    onOpenReading();
+    return;
+  }
+  if (id === "library") {
+    onOpenRepertoire();
+    return;
+  }
+  if (id === "theory") {
+    onOpenPractice();
+  }
+}
+
 const showBack = computed(
   () => screen.value === "reading"
     || screen.value === "sight"
+    || screen.value === "repertoire"
+    || screen.value === "practice"
+    || screen.value === "l3"
     || screen.value === "review"
     || screen.value === "test",
 );
@@ -265,6 +365,13 @@ function onOpenReading() {
     return;
   }
   if (profile.value.lessonId === "L2-test") {
+    if (profile.value.l2Passed) {
+      // 已经过了 L2 还点「先认谱」，是想回看，不是想重考；回到最后一课而不是再考一次。
+      persist({ ...profile.value, lessonId: "L2-6", lessonPhase: "notes", findCorrect: 0, linesCompleted: 0 });
+      forcedScore.value = null;
+      screen.value = "reading";
+      return;
+    }
     startL2Test();
     return;
   }
@@ -307,6 +414,19 @@ function onOpenError() {
   forcedScore.value = snippet;
   sightSession.value += 1;
   screen.value = "sight";
+}
+
+function onOpenRepertoire() {
+  screen.value = "repertoire";
+}
+
+function onOpenPractice(mode: "free" | "stages" = "free") {
+  practiceMode.value = mode;
+  screen.value = "practice";
+}
+
+function onOpenL3() {
+  screen.value = "l3";
 }
 
 function onOpenPlacement() {
@@ -733,6 +853,10 @@ function lineMs(current: Score, hand: Hand | "BOTH", tempo: number): number {
     <AppShell
       v-else
       :title="shellTitle"
+      :section="shellSection"
+      :show-heading="shellShowHeading"
+      :sections="navSections"
+      :active-section="activeSection"
       :midi-connected="midiConnected"
       :midi-device-name="bleDevice"
       :web-midi-connected="webMidiConnected"
@@ -751,6 +875,7 @@ function lineMs(current: Score, hand: Hand | "BOTH", tempo: number): number {
       @toggle-metronome="toggleMetronome"
       @metronome-bpm="setMetronomeBpm"
       @toggle-keyboard="toggleKeyboardMode"
+      @navigate="onNavigate"
     >
       <HomeView
         v-if="screen === 'home'"
@@ -759,6 +884,8 @@ function lineMs(current: Score, hand: Hand | "BOTH", tempo: number): number {
         :left-unlocked="canEnterSight(profile, 'LH')"
         @open-reading="onOpenReading"
         @open-sight="onOpenSight"
+        @open-repertoire="onOpenRepertoire"
+        @open-practice="onOpenPractice"
         @open-error="onOpenError"
         @open-placement="onOpenPlacement"
       />
@@ -768,14 +895,12 @@ function lineMs(current: Score, hand: Hand | "BOTH", tempo: number): number {
         :profile="profile"
         :midi-connected="midiConnected"
         @update-profile="onProfile"
-        @connect-midi="connectMidi"
       />
       <ReadingView
         v-else-if="screen === 'reading'"
         :profile="profile"
         :midi-connected="midiConnected"
         @update-profile="onProfile"
-        @connect-midi="connectMidi"
       />
       <SightView
         v-else-if="screen === 'sight'"
@@ -785,7 +910,24 @@ function lineMs(current: Score, hand: Hand | "BOTH", tempo: number): number {
         :forced-score="forcedScore"
         @update-profile="onProfile"
         @finished="onSightFinished"
-        @connect-midi="connectMidi"
+      />
+      <RepertoireView
+        v-else-if="screen === 'repertoire'"
+        :profile="profile"
+        @open-reading="onOpenReading"
+        @open-l3="onOpenL3"
+      />
+      <PracticeView
+        v-else-if="screen === 'practice'"
+        :profile="profile"
+        :initial-mode="practiceMode"
+        @update-profile="onProfile"
+        @open-l3="onOpenL3"
+      />
+      <L3PrepView
+        v-else-if="screen === 'l3'"
+        :profile="profile"
+        @update-profile="onProfile"
       />
       <ReviewView
         v-else-if="screen === 'review' && review"
@@ -796,7 +938,6 @@ function lineMs(current: Score, hand: Hand | "BOTH", tempo: number): number {
         :late-note-ids="review.lateNoteIds"
         :has-error-book="profile.errorSnippets.length > 0"
         @next="onReviewNext"
-        @home="goHome"
         @retry-error="onReviewRetryError"
       />
       <div
@@ -810,12 +951,7 @@ function lineMs(current: Score, hand: Hand | "BOTH", tempo: number): number {
         :data-score-id="testScore?.id"
         :data-listening="testListening ? 'true' : 'false'"
       >
-        <div v-if="!midiConnected" class="connect-prompt">
-          <p class="warn">请连接 MIDI 键盘</p>
-          <button type="button" class="primary" data-test="connect-midi" @click="connectMidi">
-            连接 MIDI 键盘
-          </button>
-        </div>
+        <p v-if="!midiConnected" class="warn">请连接 MIDI 键盘（右上角）</p>
         <p class="hand" data-test="test-hand">{{ testHandLabel }}</p>
         <div ref="testStaffEl" class="staff"></div>
         <ScoreProgress v-if="testScore" :value="testProgress" />
@@ -861,18 +997,10 @@ function lineMs(current: Score, hand: Hand | "BOTH", tempo: number): number {
 
 .primary {
   padding: 0.55rem 0.9rem;
-  border: 1px solid var(--pb-accent);
+  border: 1px solid var(--pb-accent-2);
   border-radius: var(--pb-radius);
-  background: var(--pb-accent);
+  background: var(--pb-accent-2);
   color: var(--pb-accent-text);
   cursor: pointer;
-}
-
-.connect-prompt {
-  margin: 0 0 1rem;
-}
-
-.connect-prompt .warn {
-  margin-bottom: 0.5rem;
 }
 </style>

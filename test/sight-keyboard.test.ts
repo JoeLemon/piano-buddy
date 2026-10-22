@@ -5,14 +5,24 @@ import { generateL1 } from "../src/domain/generate";
 import { pitchLabel, pitchToMidi } from "../src/domain/pitch";
 import { initialProfile, type Profile } from "../src/domain/profile";
 import type { Hand, Score } from "../src/domain/types";
-import { KEY_TO_MIDI, setKeyboardMode } from "../src/midi/keyboard";
+import { DEFAULT_ZONE, codeForMidi, setActiveZone, setKeyboardMode } from "../src/midi/keyboard";
 import SightView from "../src/ui/SightView.vue";
 
 function keyEvent(type: "keydown" | "keyup", code: string, init: KeyboardEventInit = {}) {
   return new KeyboardEvent(type, { code, bubbles: true, ...init });
 }
 
-const CODE_FOR_MIDI = new Map(Object.entries(KEY_TO_MIDI).map(([code, midi]) => [midi, code]));
+/** 取某个音在当前音区对应的电脑键。视奏页会把音区跟着谱面走，这里同步一下。 */
+function codeFor(midi: number): string {
+  const code = codeForMidi(midi);
+  if (code) return code;
+  for (let zone = 1; zone <= 7; zone += 1) {
+    setActiveZone(zone);
+    const found = codeForMidi(midi);
+    if (found) return found;
+  }
+  throw new Error(`没有能弹 ${midi} 的电脑键`);
+}
 
 function sounding(score: Score, hand: Hand): { id: string; midi: number; label: string }[] {
   const notes: { id: string; midi: number; label: string }[] = [];
@@ -31,6 +41,7 @@ function sightProfile(): Profile {
 
 afterEach(() => {
   setKeyboardMode(false);
+  setActiveZone(DEFAULT_ZONE);
   vi.useRealTimers();
   vi.restoreAllMocks();
 });
@@ -50,7 +61,7 @@ describe("SightView with simulated keyboard", () => {
 
     const score = generateL1({ hand: "RH", seed: 1, mode: "sight" });
     const first = sounding(score, "RH")[0];
-    const code = CODE_FOR_MIDI.get(first.midi);
+    const code = codeFor(first.midi);
     expect(code).toBeTruthy();
 
     window.dispatchEvent(keyEvent("keydown", code!));
@@ -73,7 +84,7 @@ describe("SightView with simulated keyboard", () => {
 
     const score = generateL1({ hand: "RH", seed: 1, mode: "sight" });
     const first = sounding(score, "RH")[0];
-    const wrongCode = CODE_FOR_MIDI.get(first.midi === 60 ? 61 : 60);
+    const wrongCode = codeFor(first.midi === 60 ? 61 : 60);
     window.dispatchEvent(keyEvent("keydown", wrongCode!));
     await flushPromises();
     expect(wrapper.find("[data-wrong]").exists()).toBe(true);

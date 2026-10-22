@@ -2,7 +2,6 @@ import { enableAutoUnmount, flushPromises, mount } from "@vue/test-utils";
 import { afterEach, describe, expect, it } from "vitest";
 import { parsePitchLabel, pitchToMidi } from "../src/domain/pitch";
 import { initialProfile, type Profile } from "../src/domain/profile";
-import { whiteKeyMidis } from "../src/notation/renderScore";
 import ReadingView from "../src/ui/ReadingView.vue";
 
 class FakeInput extends EventTarget {
@@ -55,6 +54,26 @@ describe("ReadingView", () => {
     expect(wrapper.emitted("update-profile")).toBeFalsy();
   });
 
+  it("plays the highlighted key by clicking the on-screen keyboard, without MIDI", async () => {
+    const wrapper = mount(ReadingView, {
+      props: {
+        profile: { ...initialProfile(), lessonId: "L1-2", seenReadingTips: true },
+        midiConnected: false,
+      },
+    });
+    const target = wrapper.findAll(".white-key").find((key) => key.classes().includes("is-target"));
+    expect(target).toBeTruthy();
+    expect(target!.attributes("data-midi")).toBe(String(pitchToMidi(parsePitchLabel("C4"))));
+
+    // 鼠标点琴键（source=screen）本身就是输入源，不需要先连 MIDI。
+    await target!.trigger("pointerdown", { pointerType: "mouse", button: 0 });
+    await flushPromises();
+
+    const emitted = wrapper.emitted("update-profile");
+    expect(emitted).toBeTruthy();
+    expect((emitted![0][0] as Profile).findCorrect).toBe(1);
+  });
+
   it("drops queued right-hand pitches before the first left-hand find", async () => {
     const input = new FakeInput();
     installAccess([input]);
@@ -74,14 +93,9 @@ describe("ReadingView", () => {
 
     expect(wrapper.text()).toContain("低音 C 在低音谱第二间，左手五指。");
     expect(wrapper.text()).not.toContain("高音谱下加一间");
-    const highlighted = wrapper.findAll(".white-key").findIndex((key) => key.classes().includes("is-target"));
-    expect(whiteKeyMidis()[highlighted]).toBe(pitchToMidi(parsePitchLabel("C3")));
-
-    // 左手五指位的 C3 用左手五指，右手整体淡出。
-    const activeFinger = wrapper.find(".hand[data-hand='LH'] .finger.is-active");
-    expect(activeFinger.exists()).toBe(true);
-    expect(activeFinger.text()).toBe("5");
-    expect(wrapper.find(".hand[data-hand='RH']").classes()).toContain("is-dim");
+    // 全尺寸键盘上按 data-midi 找目标键，不再依赖 C3–C5 的局部下标。
+    const target = wrapper.findAll(".white-key").find((key) => key.classes().includes("is-target"));
+    expect(target?.attributes("data-midi")).toBe(String(pitchToMidi(parsePitchLabel("C3"))));
 
     const presented = wrapper.emitted("update-profile")?.[0]?.[0] as Profile;
     expect(presented.findCorrect).toBe(6);

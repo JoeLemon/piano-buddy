@@ -1,6 +1,6 @@
 import { mount } from "@vue/test-utils";
 import { afterEach, describe, expect, it } from "vitest";
-import { initialProfile, type Profile } from "../src/domain/profile";
+import { initialProfile } from "../src/domain/profile";
 import { createCurriculumStageQuestions } from "../src/practice";
 import PracticeView from "../src/ui/PracticeView.vue";
 
@@ -86,11 +86,15 @@ describe("PracticeView", () => {
     expect(wrapper.get("[data-test=practice-progress]").text()).toBe("第 1 / 8 题");
   });
 
-  it("links to the L3 prep lessons", async () => {
+  it("routes to sight reading and the error book from the practice hub", async () => {
     const wrapper = mount(PracticeView, { props: { seed: 1 } });
 
-    await wrapper.get("[data-test=practice-l3]").trigger("click");
-    expect(wrapper.emitted("open-l3")).toHaveLength(1);
+    await wrapper.get("[data-test=practice-sight]").trigger("click");
+    expect(wrapper.emitted("open-sight")).toHaveLength(1);
+
+    // 没有错题时错题入口置灰，避免进到空页面。
+    expect(wrapper.get("[data-test=practice-errors]").attributes("disabled")).toBeDefined();
+    expect(wrapper.get("[data-test=practice-errors]").text()).toContain("暂无错题");
   });
 
   it("plays a melody question through the shared preview player", async () => {
@@ -111,17 +115,17 @@ describe("PracticeView", () => {
     }
   });
 
-  it("runs the first curriculum stage and records a pass", async () => {
+  it("runs a theory drill preset without writing a second progress track", async () => {
     const wrapper = mount(PracticeView, {
-      props: { seed: 1, initialMode: "stages", profile: initialProfile() },
+      props: { seed: 1, profile: initialProfile() },
     });
 
     expect(wrapper.find("[data-test=practice-stages]").exists()).toBe(true);
-    expect(wrapper.get("[data-test=practice-stage-Q1]").attributes("data-state")).toBe("current");
-    expect(wrapper.get("[data-test=practice-stage-Q2]").attributes("data-state")).toBe("locked");
+    await wrapper.get("[data-test=practice-stage-Q1]").trigger("click");
+    expect(wrapper.find("[data-test=practice-stage-head]").exists()).toBe(true);
     expect(wrapper.get("[data-test=practice-progress]").text()).toBe("第 1 / 5 题");
 
-    for (const question of createCurriculumStageQuestions("Q1", 1)) {
+    for (const question of createCurriculumStageQuestions("Q1", 1 + 7919)) {
       const answer = question.choices.find((choice) => choice.id === question.answerId);
       expect(answer).toBeTruthy();
       const button = wrapper
@@ -132,10 +136,8 @@ describe("PracticeView", () => {
       await wrapper.get("[data-test=practice-next]").trigger("click");
     }
 
-    expect(wrapper.get("[data-test=practice-summary]").text()).toContain("本关通过");
-    const emitted = wrapper.emitted("update-profile");
-    expect(emitted).toHaveLength(1);
-    expect((emitted?.[0]?.[0] as Profile).curriculumCompleted).toEqual(["Q1"]);
-    expect(wrapper.get("[data-test=practice-stage-Q2]").attributes("data-state")).toBe("current");
+    expect(wrapper.get("[data-test=practice-summary]").text()).toContain("本组答对");
+    // 专项题组不再写档案进度，也不再有第二套关卡状态。
+    expect(wrapper.emitted("update-profile")).toBeFalsy();
   });
 });

@@ -116,9 +116,6 @@ describe("L2-4 F and L2-5 G key finding", () => {
     expect(wrapper.get("[data-active=true]").text()).toBe("F 五指");
     expect(wrapper.get(".staff").element.querySelectorAll(".vf-stave").length).toBe(4);
     expect(wrapper.find("[data-test=keyboard]").exists()).toBe(true);
-    // 琴键图跟着手位挪到 F 位：左手最低音 F3、右手最低音 F4。
-    expect(wrapper.find(".hand[data-hand='LH']").attributes("style")).toContain("--hand-start: 3");
-    expect(wrapper.find(".hand[data-hand='RH']").attributes("style")).toContain("--hand-start: 10");
     expect(wrapper.emitted("update-profile")).toBeFalsy();
   });
 
@@ -180,10 +177,6 @@ describe("L2-4 F and L2-5 G key finding", () => {
       },
     });
     await flushPromises();
-
-    // 琴键图在 G 位：左手最低音 G3、右手最低音 G4。
-    expect(wrapper.find(".hand[data-hand='LH']").attributes("style")).toContain("--hand-start: 4");
-    expect(wrapper.find(".hand[data-hand='RH']").attributes("style")).toContain("--hand-start: 11");
 
     const g = keyFind(5, "G", "LH");
     const f = keyFind(5, "F", "LH");

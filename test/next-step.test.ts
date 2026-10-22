@@ -73,7 +73,7 @@ describe("nextAction", () => {
     expect(action.detail).toContain("双手");
   });
 
-  it("promotes sight reading to the daily default after L2", () => {
+  it("moves into L3 chords after L2 instead of jumping straight to sight", () => {
     const action = nextAction(profile({
       assessment: assessed,
       lessonId: "L2-test",
@@ -81,8 +81,24 @@ describe("nextAction", () => {
       l1LeftPassed: true,
       l2Passed: true,
     }));
+    expect(action.kind).toBe("lesson");
+    expect(action.eyebrow).toBe("L3 和弦");
+    expect(action.title).toContain("双音");
+    expect(action.cta).toBe("开始 L3");
+    expect(action.goal).toBe("短句 0/2");
+  });
+
+  it("promotes sight reading to the daily default after L3", () => {
+    const action = nextAction(profile({
+      assessment: assessed,
+      lessonId: "L3R-test",
+      l1RightPassed: true,
+      l1LeftPassed: true,
+      l2Passed: true,
+      l3Passed: true,
+    }));
     expect(action.kind).toBe("sight");
-    expect(action.detail).toContain("L2 也过了");
+    expect(action.detail).toContain("L3 也过了");
     expect(action.goal).toBe("一条最多 2 遍");
   });
 
@@ -135,12 +151,22 @@ describe("learningPath", () => {
     expect(stages[1].state).toBe("done");
     const l3 = stages.find((stage) => stage.id === "L3");
     expect(l3?.state).toBe("current");
-    expect(l3?.caption).toBe("已上 2/9");
+    expect(l3?.caption).toBe("正在学 · 预备 2/9");
   });
 
-  it("treats the library as ready once L2 is passed", () => {
+  it("marks the library ready once L3 is passed", () => {
+    const stages = learningPath(profile({ l2Passed: true, l3Passed: true, l1RightPassed: true, l1LeftPassed: true }));
+    expect(stages.find((stage) => stage.id === "L3")?.state).toBe("done");
+    const library = stages.find((stage) => stage.id === "library");
+    expect(library?.state).toBe("current");
+    expect(library?.caption).toBe("挑一首曲子弹");
+  });
+
+  it("keeps the library reachable right after L2 with a softer caption", () => {
     const stages = learningPath(profile({ l2Passed: true, l1RightPassed: true, l1LeftPassed: true }));
-    expect(stages.find((stage) => stage.id === "library")?.caption).toBe("可以挑曲子");
+    const library = stages.find((stage) => stage.id === "library");
+    expect(library?.state).toBe("todo");
+    expect(library?.caption).toBe("可以边学边挑");
   });
 });
 

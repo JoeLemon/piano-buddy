@@ -5,29 +5,39 @@ import { compare, type CompareResult, type PlayedNote } from "./domain/compare";
 import { feedbackText, sightFeedbackText } from "./domain/feedback";
 import { generateL1 } from "./domain/generate";
 import { generateL2 } from "./domain/generateL2";
-import { pitchToMidi } from "./domain/pitch";
+import { generateL3 } from "./domain/generateL3";
+import { recordPractice } from "./domain/practiceLog";
 import {
   applyAssessment,
   applyL2TestResult,
+  applyL3TestResult,
   applyTestResult,
+  canEnterL3,
   canEnterSight,
   initialProfile,
+  jumpToLesson,
   pruneExhaustedErrorSnippet,
   routeAfterAssessment,
   startL2IfReady,
+  startL3IfReady,
   testBpmForLevel,
   type Assessment,
+  type LessonId,
+  type PracticeKind,
   type Profile,
 } from "./domain/profile";
-import { flattenScore } from "./domain/timeline";
+import { scoreBeats } from "./domain/scoreBeats";
+import { scoreEvents } from "./domain/scoreEvents";
 import type { Hand, Score } from "./domain/types";
 import { DURATION_BEATS } from "./domain/vocabulary";
 import {
   connectBleMidi,
   isBleSupported,
+  keyLabels,
   keyboardMode,
   subscribeBleState,
   subscribeMidi,
+  toggleKeyLabels,
   toggleKeyboardMode,
   type MidiNote,
 } from "./midi/access";
@@ -43,8 +53,11 @@ import {
 import { loadProfile, saveProfile } from "./storage/db";
 import AppShell from "./ui/AppShell.vue";
 import HomeView from "./ui/HomeView.vue";
+import LearnView from "./ui/LearnView.vue";
+import MeView from "./ui/MeView.vue";
 import PlacementView from "./ui/PlacementView.vue";
 import L2ReadingView from "./ui/L2ReadingView.vue";
+import L3ReadingView from "./ui/L3ReadingView.vue";
 import L3PrepView from "./ui/L3PrepView.vue";
 import PracticeView from "./ui/PracticeView.vue";
 import ReadingView from "./ui/ReadingView.vue";
@@ -63,12 +76,21 @@ type Screen =
   | "practice"
   | "l3"
   | "review"
-  | "test";
+  | "test"
+  /** 学习分区落地页：识谱主线 + L3 预备两条课程线。 */
+  | "learn"
+  /** 我的分区落地页：自评、进度概览、设置。 */
+  | "me";
 
 const profile = ref<Profile>(initialProfile());
 const screen = ref<Screen>("loading");
-/** 乐理页的初始模式：首页「主线闯关」直接进关卡，其余入口进自由练习。 */
-const practiceMode = ref<"free" | "stages">("free");
+/**
+ * 沉浸页的返回目标：只记录一级分区落地页（今日/学习/练习/曲库/我的）。
+ * 过关、复盘这类流程内切屏不会覆盖它，因此从课程进入过关再返回，仍回到最初的分区页。
+ */
+const returnTo = ref<Screen>("home");
+/** 壳层实例：供「我的」页直接拉起设置抽屉，避免再复制一套设置 UI。 */
+const shellRef = ref<{ openSettings: () => void } | null>(null);
 const webMidiConnected = ref(false);
 const bleDevice = ref<string | null>(null);
 const midiError = ref<string | null>(null);
@@ -83,6 +105,10 @@ const bleAvailable = computed(() => isBleSupported());
 const theme = ref<"light" | "dark">(readInitialTheme());
 const sightSession = ref(0);
 const forcedScore = ref<Score | null>(null);
+/** 视奏/跟弹的来源，决定复盘后回哪里。 */
+const sightOrigin = ref<"sight" | "repertoire" | "error">("sight");
+/** 从曲库缺技能直达 L3 预备课时，打开的那一节。 */
+const l3Focus = ref<string | null>(null);
 const metronomeOn = ref(false);
 const metronomeBpm = ref(readMetronomeBpm());
 let metronomePlayback: { stop: () => void } | null = null;
@@ -98,15 +124,15 @@ const testHands = ref<Hand[]>([]);
 const testIndex = ref(0);
 const testResults = ref<CompareResult[]>([]);
 const testScore = ref<Score | null>(null);
-const testLevel = ref<1 | 2>(1);
+const testLevel = ref<1 | 2 | 3>(1);
 const activeTestHand = ref<Hand>("RH");
 const testFeedback = ref("");
 const testPhase = ref<"play" | "feedback">("play");
 const testListening = ref(false);
 const testComplete = ref(false);
 const testStaffEl = ref<HTMLElement | null>(null);
-/** L2 过关是双手一条，界面手势说「双手」。 */
-const testGrand = computed(() => testLevel.value === 2);
+/** L2/L3 过关是双手一条，界面手势说「双手」。 */
+const testGrand = computed(() => testLevel.value !== 1);
 const testHandLabel = computed(() => {
   if (testGrand.value) return "双手";
   return activeTestHand.value === "RH" ? "右手" : "左手";
@@ -125,13 +151,17 @@ const shellTitle = computed(() => {
     case "repertoire":
       return "选一首曲子";
     case "practice":
-      return "乐理练习";
+      return "练习";
     case "l3":
       return "L3 预备课";
     case "review":
       return "复盘";
     case "test":
       return "过关测试";
+    case "learn":
+    case "me":
+      // 两个分区页自带 h1，壳层不再重复出标题。
+      return undefined;
     default:
       return undefined;
   }
@@ -143,33 +173,43 @@ const shellSection = computed(() => {
     case "home":
     case "placement":
       return undefined;
+    case "learn":
     case "reading":
-    case "sight":
-    case "review":
     case "test":
     case "l3":
-      return "课程";
+      return "学习";
+    case "practice":
+    case "sight":
+    case "review":
+      return "练习";
     case "repertoire":
       return "曲库";
-    case "practice":
-      return "乐理";
+    case "me":
+      return "我的";
     default:
       return undefined;
   }
 });
 
-/** 这些页面自己带 h1（三道自评 / 选一首曲子 / 复盘），壳就不再重复出一行标题。 */
+/** 这些页面自己带 h1（三道自评 / 选一首曲子 / 复盘 / 学习 / 我的），壳就不再重复出一行标题。 */
 const shellShowHeading = computed(
   () => screen.value !== "placement"
     && screen.value !== "repertoire"
-    && screen.value !== "review",
+    && screen.value !== "review"
+    && screen.value !== "learn"
+    && screen.value !== "me",
 );
 
+/**
+ * 一级导航按「行为」分区：今日决定做什么，学习有先后，练习随时可做，
+ * 曲库是内容，我的放档案与设置。过关/复盘属于流程内页，不进导航。
+ */
 const NAV_SECTIONS = [
   { id: "today", label: "今日" },
-  { id: "course", label: "课程" },
+  { id: "learn", label: "学习" },
+  { id: "practice", label: "练习" },
   { id: "library", label: "曲库" },
-  { id: "theory", label: "乐理" },
+  { id: "me", label: "我的" },
 ] as const;
 
 const activeSection = computed(() => {
@@ -177,12 +217,21 @@ const activeSection = computed(() => {
     case "home":
     case "placement":
       return "today";
+    case "learn":
+    case "reading":
+    case "test":
+    case "l3":
+      return "learn";
+    case "practice":
+    case "sight":
+    case "review":
+      return "practice";
     case "repertoire":
       return "library";
-    case "practice":
-      return "theory";
+    case "me":
+      return "me";
     default:
-      return "course";
+      return "today";
   }
 });
 
@@ -195,21 +244,51 @@ const navSections = computed(() => {
   return immersive ? [] : NAV_SECTIONS;
 });
 
+/** 只有一级分区落地页能成为返回目标；流程页（自评/过关/复盘）不记来路。 */
+const SECTION_SCREENS = new Set<Screen>(["home", "learn", "practice", "repertoire", "me"]);
+
+/**
+ * 从一级分区进入流程页时只记来源，切屏交给流程函数自己完成。
+ * 过关测试由 startTest/startL2Test 接管，所以这里不能直接改 screen。
+ */
+function recordReturn() {
+  if (SECTION_SCREENS.has(screen.value)) returnTo.value = screen.value;
+}
+
+/**
+ * 用户主动进入某一页时调用：如果当前正停在一级分区，就把它记作返回目标。
+ * 沉浸页之间、流程页之间的切换不覆盖来路，避免返回键越退越远。
+ */
+function navigateTo(next: Screen) {
+  if (next === screen.value) return;
+  recordReturn();
+  screen.value = next;
+}
+
+/** 返回：回到进入当前页之前的分区页；没有记录时回今日。 */
+function onBack() {
+  stopTestAudio();
+  review.value = null;
+  forcedScore.value = null;
+  screen.value = returnTo.value;
+}
+
 function onNavigate(id: string) {
-  if (id === "today") {
-    goHome();
-    return;
-  }
-  if (id === "course") {
-    onOpenReading();
-    return;
-  }
-  if (id === "library") {
-    onOpenRepertoire();
-    return;
-  }
-  if (id === "theory") {
-    onOpenPractice();
+  switch (id) {
+    case "today":
+      goHome();
+      return;
+    case "learn":
+      onOpenLearn();
+      return;
+    case "practice":
+      onOpenPractice();
+      return;
+    case "library":
+      onOpenRepertoire();
+      return;
+    case "me":
+      navigateTo("me");
   }
 }
 
@@ -231,9 +310,13 @@ let testClockOn = false;
 let testStartedAt = 0;
 let testClockBpm = 60;
 let testCursor = 0;
+/** 当前要按的「拍」下标；与 testCursor（事件数）分开，因为一拍可能有两个事件。 */
+let testTargetIndex = 0;
 let testPlayed: PlayedNote[] = [];
 let testWrong = new Set<string>();
 const testCorrect = new Set<string>();
+/** 和弦过关时先攒够这一组要按的键，再整组判定。 */
+let testChordBuffer: number[] = [];
 const testProgress = ref(0);
 let midiWatchStop: (() => void) | null = null;
 let bleStateStop: (() => void) | null = null;
@@ -346,9 +429,40 @@ function persist(next: Profile) {
   void saveProfile(snapshot);
 }
 
+/** 记录练习时长的页面；其他页面（今天/学习/我的/自评）不计入。 */
+const PRACTICE_KIND_BY_SCREEN: Partial<Record<Screen, PracticeKind>> = {
+  reading: "reading",
+  sight: "sight",
+  test: "test",
+  practice: "theory",
+  l3: "theory",
+  repertoire: "repertoire",
+};
+
+/** 停留不足 15 秒的页面当作「只是点进来看看」，不写进练习记录。 */
+const MIN_PRACTICE_MS = 15000;
+
+let screenEnteredAt = Date.now();
+
+/**
+ * 在页面之间切换时结算上一个页面：把停留时长写成一条练习记录。
+ * 单次上限与按天聚合交给 practiceLog，这里只负责「哪一段算练习」。
+ */
+watch(screen, (next, previous) => {
+  const now = Date.now();
+  const kind = previous ? PRACTICE_KIND_BY_SCREEN[previous] : undefined;
+  if (kind) {
+    const ms = now - screenEnteredAt;
+    if (ms >= MIN_PRACTICE_MS) {
+      persist(recordPractice(profile.value, kind, ms, screenEnteredAt));
+    }
+  }
+  screenEnteredAt = now;
+});
+
 function onOpenReading() {
   if (!profile.value.lessonId) {
-    screen.value = "placement";
+    navigateTo("placement");
     return;
   }
   if (profile.value.lessonId === "L1-test") {
@@ -361,6 +475,7 @@ function onOpenReading() {
       : profile.value.l1LeftPassed
         ? ["RH"]
         : ["RH", "LH"];
+    recordReturn();
     startTest(hands);
     return;
   }
@@ -369,15 +484,33 @@ function onOpenReading() {
       // 已经过了 L2 还点「先认谱」，是想回看，不是想重考；回到最后一课而不是再考一次。
       persist({ ...profile.value, lessonId: "L2-6", lessonPhase: "notes", findCorrect: 0, linesCompleted: 0 });
       forcedScore.value = null;
-      screen.value = "reading";
+      navigateTo("reading");
       return;
     }
+    recordReturn();
     startL2Test();
+    return;
+  }
+  if (profile.value.lessonId.startsWith("L3R")) {
+    if (profile.value.lessonId === "L3R-test") {
+      if (profile.value.l3Passed) {
+        // 已经过了 L3 还点进来，是回看，不是重考。
+        persist({ ...profile.value, lessonId: "L3R-4", lessonPhase: "notes", findCorrect: 0, linesCompleted: 0 });
+        forcedScore.value = null;
+        navigateTo("reading");
+        return;
+      }
+      recordReturn();
+      startL3Test();
+      return;
+    }
+    forcedScore.value = null;
+    navigateTo("reading");
     return;
   }
   if (profile.value.lessonId.startsWith("L2")) {
     forcedScore.value = null;
-    screen.value = "reading";
+    navigateTo("reading");
     return;
   }
   if (profile.value.l1RightPassed && profile.value.l1LeftPassed) {
@@ -386,7 +519,7 @@ function onOpenReading() {
     return;
   }
   forcedScore.value = null;
-  screen.value = "reading";
+  navigateTo("reading");
 }
 
 /** 进 L2：先把课位推到 L2-1（已经进过就原地不动）。 */
@@ -394,7 +527,34 @@ function enterL2Reading() {
   const next = startL2IfReady(profile.value);
   if (next.lessonId !== profile.value.lessonId) persist(next);
   forcedScore.value = null;
-  screen.value = "reading";
+  navigateTo("reading");
+}
+
+/** L3 和弦识谱入口：L2 过关才真正开课；已过 L3 则回看最后一课。 */
+function onOpenL3Reading() {
+  if (!profile.value.assessment) {
+    navigateTo("placement");
+    return;
+  }
+  if (!canEnterL3(profile.value)) {
+    onOpenReading();
+    return;
+  }
+  // 课位停在 L3 过关节点时，交给 onOpenReading 决定是重考还是回看。
+  if (profile.value.lessonId === "L3R-test") {
+    onOpenReading();
+    return;
+  }
+  if (profile.value.l3Passed) {
+    persist({ ...profile.value, lessonId: "L3R-4", lessonPhase: "notes", findCorrect: 0, linesCompleted: 0 });
+    forcedScore.value = null;
+    navigateTo("reading");
+    return;
+  }
+  const next = startL3IfReady(profile.value);
+  if (next.lessonId !== profile.value.lessonId) persist(next);
+  forcedScore.value = null;
+  navigateTo("reading");
 }
 
 function onOpenSight() {
@@ -403,8 +563,9 @@ function onOpenSight() {
     return;
   }
   forcedScore.value = null;
+  sightOrigin.value = "sight";
   sightSession.value += 1;
-  screen.value = "sight";
+  navigateTo("sight");
 }
 
 function onOpenError() {
@@ -412,21 +573,57 @@ function onOpenError() {
   if (!snippet) return;
   if (!canEnterSight(profile.value, "RH") && !canEnterSight(profile.value, "LH")) return;
   forcedScore.value = snippet;
+  sightOrigin.value = "error";
   sightSession.value += 1;
-  screen.value = "sight";
+  navigateTo("sight");
 }
 
 function onOpenRepertoire() {
-  screen.value = "repertoire";
+  navigateTo("repertoire");
 }
 
-function onOpenPractice(mode: "free" | "stages" = "free") {
-  practiceMode.value = mode;
-  screen.value = "practice";
+/** 曲库「跟弹本段」：把切好的片段当视奏谱打开，但保留曲库来路。 */
+function onFollowScore(payload: { score: Score; hand: Hand | "BOTH"; title: string }) {
+  forcedScore.value = payload.score;
+  sightOrigin.value = "repertoire";
+  sightSession.value += 1;
+  navigateTo("sight");
+}
+
+/** 曲库缺技能直达：只改课位，不清已通过的 L1/L2/L3。 */
+function onOpenLesson(lessonId: LessonId) {
+  // 曲库可以先点 L3 技能，但没 L2 过关时仍然先回识谱主线。
+  if (lessonId.startsWith("L3R") && !canEnterL3(profile.value)) {
+    onOpenReading();
+    return;
+  }
+  persist(jumpToLesson(profile.value, lessonId));
+  forcedScore.value = null;
+  navigateTo("reading");
+}
+
+/** 曲库缺技能直达乐理预备课：打开指定那一节。 */
+function onOpenTheory(lessonId: string) {
+  l3Focus.value = lessonId;
+  navigateTo("l3");
+}
+
+/** 学习分区落地页：没有自评就没有课程线，先回自评。 */
+function onOpenLearn() {
+  if (!profile.value.assessment) {
+    navigateTo("placement");
+    return;
+  }
+  navigateTo("learn");
+}
+
+function onOpenPractice() {
+  navigateTo("practice");
 }
 
 function onOpenL3() {
-  screen.value = "l3";
+  l3Focus.value = null;
+  navigateTo("l3");
 }
 
 function onOpenPlacement() {
@@ -458,6 +655,10 @@ function onProfile(next: Profile) {
   }
   if (next.lessonId === "L2-test" && previous.lessonId !== "L2-test") {
     startL2Test();
+    return;
+  }
+  if (next.lessonId === "L3R-test" && previous.lessonId !== "L3R-test") {
+    startL3Test();
   }
 }
 
@@ -488,9 +689,17 @@ function onSightFinished(payload: {
 }
 
 function onReviewNext() {
+  if (sightOrigin.value === "repertoire") {
+    review.value = null;
+    forcedScore.value = null;
+    sightOrigin.value = "sight";
+    screen.value = "repertoire";
+    return;
+  }
   persist({ ...profile.value, lastSeed: profile.value.lastSeed + 1 });
   review.value = null;
   forcedScore.value = null;
+  sightOrigin.value = "sight";
   sightSession.value += 1;
   screen.value = "sight";
 }
@@ -504,6 +713,7 @@ function onReviewRetryError() {
     return;
   }
   forcedScore.value = snippet;
+  sightOrigin.value = "error";
   sightSession.value += 1;
   screen.value = "sight";
 }
@@ -543,8 +753,35 @@ function startL2Test() {
   testPlayed = [];
   testWrong = new Set();
   testCorrect.clear();
+  testChordBuffer = [];
   testProgress.value = 0;
   testCursor = 0;
+  testTargetIndex = 0;
+  testPhase.value = "play";
+  screen.value = "test";
+  void armTestInput();
+}
+
+/** L3 过关：双手 + 三和弦 + 临时升降；通过后解锁 L3 视奏与曲库闭环。 */
+function startL3Test() {
+  stopTestAudio();
+  testLevel.value = 3;
+  testHands.value = ["RH", "LH"];
+  testIndex.value = 0;
+  testResults.value = [];
+  testComplete.value = false;
+  testFeedback.value = "";
+  activeTestHand.value = "RH";
+  const seed = profile.value.lastSeed;
+  testScore.value = generateL3({ seed, mode: "reading-test", shape: { kind: "test" } });
+  persist({ ...profile.value, lastSeed: seed + 1 });
+  testPlayed = [];
+  testWrong = new Set();
+  testCorrect.clear();
+  testChordBuffer = [];
+  testProgress.value = 0;
+  testCursor = 0;
+  testTargetIndex = 0;
   testPhase.value = "play";
   screen.value = "test";
   void armTestInput();
@@ -563,12 +800,22 @@ function beginTestHand() {
   testPlayed = [];
   testWrong = new Set();
   testCorrect.clear();
+  testChordBuffer = [];
   testProgress.value = 0;
   testCursor = 0;
+  testTargetIndex = 0;
   void armTestInput();
 }
 
 function continueAfterFeedback() {
+  if (testLevel.value === 3) {
+    if (profile.value.l3Passed) {
+      goHome();
+      return;
+    }
+    startL3Test();
+    return;
+  }
   if (testLevel.value === 2) {
     if (profile.value.l2Passed) {
       goHome();
@@ -639,29 +886,69 @@ function startTestClock() {
   testClockBpm = testBpmForLevel(profile.value, testLevel.value);
   testMetronome?.stop();
   testMetronome = startMetronome(testClockBpm);
-  const clockHand: Hand | "BOTH" = testLevel.value === 2 ? "BOTH" : activeTestHand.value;
+  const clockHand: Hand | "BOTH" = testGrand.value ? "BOTH" : activeTestHand.value;
   const ms = lineMs(testScore.value, clockHand, testClockBpm);
   testTimer = setTimeout(() => finishTestHand(), ms);
 }
 
-/** 待弹音序列。L1 只看当前手，L2 两手按拍点合在一起；key 是谱面上色的键。 */
-function testTargets(): { key: string; midi: number }[] {
+/**
+ * 待弹序列。L1 只看当前手，L2/L3 两手按拍点合在一起。
+ *
+ * L3 双手谱里左手和弦常与右手旋律同一拍起音，所以这里按「拍」而不是按事件
+ * 分组：keys 是这一拍所有事件在谱面上对应的上色键，ids 用于回写错误。
+ */
+function testTargets(): { keys: string[]; ids: string[]; midis: number[] }[] {
   const current = testScore.value;
   if (!current) return [];
-  if (testLevel.value === 2) {
-    return flattenScore(current).map((note) => ({ key: `${note.hand}:${note.id}`, midi: note.midi }));
+  const both = testGrand.value;
+  const events = scoreEvents(current, both ? "BOTH" : activeTestHand.value);
+  const keyFor = (hand: string, id: string) => (both ? `${hand}:${id}` : id);
+  // 没有和弦时保持「一拍一个音」的旧行为（L2 双手同拍也是逐音按键）。
+  if (!events.some((event) => event.midis.length > 1)) {
+    return events.map((event) => ({
+      keys: [keyFor(event.hand, event.id)],
+      ids: [event.id],
+      midis: event.midis,
+    }));
   }
-  return soundingEvents(current, activeTestHand.value).map((event) => ({ key: event.id, midi: event.midi }));
+  return scoreBeats(events).map((beat) => ({
+    keys: beat.events.map((event) => keyFor(event.hand, event.id)),
+    ids: beat.ids,
+    midis: beat.midis,
+  }));
 }
 
 function onTestNote(note: MidiNote) {
   if (!testClockOn || note.kind !== "on" || testPhase.value !== "play" || !testScore.value) return;
-  const event = testTargets()[testCursor];
-  if (!event) return;
+  const target = testTargets()[testTargetIndex];
+  if (!target) return;
   testPlayed.push({ midi: note.midi, timeMs: note.timeMs - testStartedAt });
-  if (note.midi !== event.midi) testWrong.add(event.key);
-  else testCorrect.add(event.key);
-  testCursor += 1;
+  if (target.midis.length === 1) {
+    const key = target.keys[0];
+    if (note.midi === target.midis[0]) testCorrect.add(key);
+    else testWrong.add(key);
+    testCursor += target.keys.length;
+    testTargetIndex += 1;
+    advanceTestPaint();
+    return;
+  }
+
+  // 和弦/双手同拍：先攒够这一拍要按的键数，再整组做集合比较。
+  testChordBuffer.push(note.midi);
+  if (testChordBuffer.length < target.midis.length) {
+    advanceTestPaint();
+    return;
+  }
+  const pressed = new Set(testChordBuffer);
+  const ok = pressed.size === target.midis.length && target.midis.every((midi) => pressed.has(midi));
+  target.keys.forEach((key) => (ok ? testCorrect : testWrong).add(key));
+  testChordBuffer = [];
+  testCursor += target.keys.length;
+  testTargetIndex += 1;
+  advanceTestPaint();
+}
+
+function advanceTestPaint() {
   syncTestProgress();
   paintTestProgress();
   scrollToTestCursor();
@@ -692,27 +979,43 @@ function scrollToTestCursor() {
 function finishTestHand() {
   if (testPhase.value !== "play" || !testScore.value) return;
   testPhase.value = "feedback";
-  const targets = testTargets();
-  targets.forEach((target, index) => {
-    const hit = testPlayed[index];
-    if (!hit || hit.midi !== target.midi) testWrong.add(target.key);
-  });
-  testCursor = targets.length;
-  syncTestProgress();
-  paintTestProgress();
+  testChordBuffer = [];
   haltTestClock();
   if (testGrand.value) {
     const result = compare(testScore.value, "BOTH", testPlayed, testClockBpm);
     testResults.value = [...testResults.value, result];
-    persist(applyL2TestResult(profile.value, result));
+    const targets = testTargets();
+    const wrong = new Set(result.wrongPitchNoteIds);
+    targets.forEach((target) => {
+      const bad = target.ids.some((id) => wrong.has(id));
+      target.keys.forEach((key) => (bad ? testWrong : testCorrect).add(key));
+    });
+    testCursor = targets.reduce((count, target) => count + target.keys.length, 0);
+    syncTestProgress();
+    paintTestProgress();
+    if (testLevel.value === 3) {
+      persist(applyL3TestResult(profile.value, result));
+      testFeedback.value = feedbackText(result, 3, "RH");
+    } else {
+      persist(applyL2TestResult(profile.value, result));
+      testFeedback.value = feedbackText(result, 2, "RH");
+    }
     testComplete.value = true;
-    testFeedback.value = feedbackText(result, 2, "RH");
     return;
   }
   const hand = activeTestHand.value;
   const result = compare(testScore.value, hand, testPlayed, testClockBpm);
   testResults.value = [...testResults.value, result];
   testFeedback.value = feedbackText(result, 1, hand);
+  const targets = testTargets();
+  const wrong = new Set(result.wrongPitchNoteIds);
+  targets.forEach((target) => {
+    const bad = target.ids.some((id) => wrong.has(id));
+    target.keys.forEach((key) => (bad ? testWrong : testCorrect).add(key));
+  });
+  testCursor = targets.reduce((count, target) => count + target.keys.length, 0);
+  syncTestProgress();
+  paintTestProgress();
   if (testIndex.value === testHands.value.length - 1) {
     persist(applyTestResult(profile.value, [...testHands.value], testResults.value));
     testComplete.value = true;
@@ -821,18 +1124,6 @@ async function connectMidi() {
   }
 }
 
-function soundingEvents(current: Score, hand: Hand): { id: string; midi: number }[] {
-  const events: { id: string; midi: number }[] = [];
-  for (const measure of current.staves[hand]?.measures ?? []) {
-    for (const note of measure.notes) {
-      if (note.duration.endsWith("r") || note.pitches.length === 0) continue;
-      const pitch = note.pitches[0];
-      events.push({ id: note.id, midi: pitchToMidi(pitch) });
-    }
-  }
-  return events;
-}
-
 function lineMs(current: Score, hand: Hand | "BOTH", tempo: number): number {
   const hands: readonly Hand[] = hand === "BOTH" ? ["RH", "LH"] : [hand];
   const beats = Math.max(
@@ -852,6 +1143,7 @@ function lineMs(current: Score, hand: Hand | "BOTH", tempo: number): number {
     <p v-if="screen === 'loading'" class="loading">正在读取档案</p>
     <AppShell
       v-else
+      ref="shellRef"
       :title="shellTitle"
       :section="shellSection"
       :show-heading="shellShowHeading"
@@ -869,12 +1161,14 @@ function lineMs(current: Score, hand: Hand | "BOTH", tempo: number): number {
       :metronome-on="metronomeOn"
       :metronome-bpm="metronomeBpm"
       :keyboard-mode="keyboardMode"
-      @back="goHome"
+      :key-labels="keyLabels"
+      @back="onBack"
       @connect-midi="connectMidi"
       @toggle-theme="toggleTheme"
       @toggle-metronome="toggleMetronome"
       @metronome-bpm="setMetronomeBpm"
       @toggle-keyboard="toggleKeyboardMode"
+      @toggle-key-labels="toggleKeyLabels"
       @navigate="onNavigate"
     >
       <HomeView
@@ -883,6 +1177,7 @@ function lineMs(current: Score, hand: Hand | "BOTH", tempo: number): number {
         :right-unlocked="canEnterSight(profile, 'RH')"
         :left-unlocked="canEnterSight(profile, 'LH')"
         @open-reading="onOpenReading"
+        @open-l3-reading="onOpenL3Reading"
         @open-sight="onOpenSight"
         @open-repertoire="onOpenRepertoire"
         @open-practice="onOpenPractice"
@@ -890,8 +1185,27 @@ function lineMs(current: Score, hand: Hand | "BOTH", tempo: number): number {
         @open-placement="onOpenPlacement"
       />
       <PlacementView v-else-if="screen === 'placement'" @submit="onAssessment" />
+      <LearnView
+        v-else-if="screen === 'learn'"
+        :profile="profile"
+        @open-reading="onOpenReading"
+        @open-l3-reading="onOpenL3Reading"
+        @open-l3="onOpenL3"
+      />
+      <MeView
+        v-else-if="screen === 'me'"
+        :profile="profile"
+        @open-placement="onOpenPlacement"
+        @open-settings="shellRef?.openSettings()"
+      />
       <L2ReadingView
         v-else-if="screen === 'reading' && profile.lessonId?.startsWith('L2')"
+        :profile="profile"
+        :midi-connected="midiConnected"
+        @update-profile="onProfile"
+      />
+      <L3ReadingView
+        v-else-if="screen === 'reading' && profile.lessonId?.startsWith('L3R')"
         :profile="profile"
         :midi-connected="midiConnected"
         @update-profile="onProfile"
@@ -908,6 +1222,7 @@ function lineMs(current: Score, hand: Hand | "BOTH", tempo: number): number {
         :profile="profile"
         :midi-connected="midiConnected"
         :forced-score="forcedScore"
+        :practice-mode="sightOrigin === 'repertoire'"
         @update-profile="onProfile"
         @finished="onSightFinished"
       />
@@ -915,18 +1230,21 @@ function lineMs(current: Score, hand: Hand | "BOTH", tempo: number): number {
         v-else-if="screen === 'repertoire'"
         :profile="profile"
         @open-reading="onOpenReading"
-        @open-l3="onOpenL3"
+        @open-lesson="onOpenLesson"
+        @open-theory="onOpenTheory"
+        @follow-score="onFollowScore"
       />
       <PracticeView
         v-else-if="screen === 'practice'"
         :profile="profile"
-        :initial-mode="practiceMode"
         @update-profile="onProfile"
-        @open-l3="onOpenL3"
+        @open-sight="onOpenSight"
+        @open-error="onOpenError"
       />
       <L3PrepView
         v-else-if="screen === 'l3'"
         :profile="profile"
+        :initial-lesson-id="l3Focus ?? undefined"
         @update-profile="onProfile"
       />
       <ReviewView
@@ -937,6 +1255,7 @@ function lineMs(current: Score, hand: Hand | "BOTH", tempo: number): number {
         :wrong-pitch-note-ids="review.wrongPitchNoteIds"
         :late-note-ids="review.lateNoteIds"
         :has-error-book="profile.errorSnippets.length > 0"
+        :next-label="sightOrigin === 'repertoire' ? '回到曲库' : '再看一条新的'"
         @next="onReviewNext"
         @retry-error="onReviewRetryError"
       />

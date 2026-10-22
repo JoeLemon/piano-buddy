@@ -1,9 +1,12 @@
 import { mount } from "@vue/test-utils";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
-  KEY_TO_MIDI,
+  DEFAULT_ZONE,
+  activeZone,
   attachKeyboardListener,
   keyCapFor,
+  setActiveZone,
+  setKeyLabels,
   setKeyboardMode,
 } from "../src/midi/keyboard";
 import type { MidiNote } from "../src/midi/types";
@@ -15,23 +18,23 @@ function keyEvent(type: "keydown" | "keyup", code: string, init: KeyboardEventIn
 
 afterEach(() => {
   setKeyboardMode(false);
+  setActiveZone(DEFAULT_ZONE);
   vi.useRealTimers();
   vi.restoreAllMocks();
 });
 
 describe("keyboard mapping", () => {
-  it("covers the C3–C5 keyboard", () => {
-    expect(KEY_TO_MIDI.KeyZ).toBe(48); // C3
-    expect(KEY_TO_MIDI.KeyQ).toBe(60); // C4
-    expect(KEY_TO_MIDI.KeyI).toBe(72); // C5
-    expect(KEY_TO_MIDI.KeyS).toBe(49); // C#3
-    expect(KEY_TO_MIDI.Digit2).toBe(61); // C#4
+  it("puts D on C4 and R on C#4 by physical position", () => {
+    expect(keyCapFor(60)).toBe("D"); // 中央 C
+    expect(keyCapFor(61)).toBe("R"); // 升 C：R 在 D 的右上角
+    expect(keyCapFor(63)).toBe("T"); // 升 D
+    expect(keyCapFor(66)).toBe("U"); // 升 F
+    expect(keyCapFor(71)).toBe("L"); // B
+    expect(keyCapFor(58)).toBe("W"); // 低一个八度的 A#
   });
 
-  it("labels keys for the on-screen diagram", () => {
-    expect(keyCapFor(60)).toBe("Q");
-    expect(keyCapFor(49)).toBe("S");
-    expect(keyCapFor(61)).toBe("2");
+  it("labels nothing outside the active zone", () => {
+    expect(keyCapFor(48)).toBeUndefined(); // C3 属音区 3
     expect(keyCapFor(1)).toBeUndefined();
   });
 });
@@ -40,7 +43,7 @@ describe("attachKeyboardListener", () => {
   it("emits nothing while simulation mode is off", () => {
     const notes: MidiNote[] = [];
     const detach = attachKeyboardListener((note) => notes.push(note));
-    window.dispatchEvent(keyEvent("keydown", "KeyZ"));
+    window.dispatchEvent(keyEvent("keydown", "KeyD"));
     expect(notes).toHaveLength(0);
     detach();
   });
@@ -49,11 +52,42 @@ describe("attachKeyboardListener", () => {
     setKeyboardMode(true);
     const notes: MidiNote[] = [];
     const detach = attachKeyboardListener((note) => notes.push(note));
-    window.dispatchEvent(keyEvent("keydown", "KeyQ"));
-    window.dispatchEvent(keyEvent("keyup", "KeyQ"));
+    window.dispatchEvent(keyEvent("keydown", "KeyD"));
+    window.dispatchEvent(keyEvent("keyup", "KeyD"));
     expect(notes).toHaveLength(2);
-    expect(notes[0]).toMatchObject({ midi: 60, kind: "on" });
+    expect(notes[0]).toMatchObject({ midi: 60, kind: "on", source: "keyboard" });
     expect(notes[1]).toMatchObject({ midi: 60, kind: "off" });
+    detach();
+  });
+
+  it("switches zone with 1–7 so D plays another C", () => {
+    setKeyboardMode(true);
+    const notes: MidiNote[] = [];
+    const detach = attachKeyboardListener((note) => notes.push(note));
+
+    window.dispatchEvent(keyEvent("keydown", "Digit3"));
+    expect(activeZone.value).toBe(3);
+    window.dispatchEvent(keyEvent("keydown", "KeyD"));
+    window.dispatchEvent(keyEvent("keyup", "KeyD"));
+    expect(notes[0]).toMatchObject({ midi: 48, kind: "on" }); // C3
+
+    window.dispatchEvent(keyEvent("keydown", "Digit5"));
+    window.dispatchEvent(keyEvent("keydown", "KeyD"));
+    expect(notes[2]).toMatchObject({ midi: 72, kind: "on" }); // C5
+    detach();
+  });
+
+  it("releases held notes when the zone changes", () => {
+    setKeyboardMode(true);
+    const notes: MidiNote[] = [];
+    const detach = attachKeyboardListener((note) => notes.push(note));
+    window.dispatchEvent(keyEvent("keydown", "KeyD"));
+    window.dispatchEvent(keyEvent("keydown", "Digit3"));
+    expect(notes.map((note) => note.kind)).toEqual(["on", "off"]);
+    expect(notes[1].midi).toBe(60);
+    // 旧键位已经清空，松开时不会重复发 off
+    window.dispatchEvent(keyEvent("keyup", "KeyD"));
+    expect(notes).toHaveLength(2);
     detach();
   });
 
@@ -61,9 +95,10 @@ describe("attachKeyboardListener", () => {
     setKeyboardMode(true);
     const notes: MidiNote[] = [];
     const detach = attachKeyboardListener((note) => notes.push(note));
-    window.dispatchEvent(keyEvent("keydown", "KeyZ", { repeat: true }));
-    window.dispatchEvent(keyEvent("keydown", "KeyZ", { ctrlKey: true }));
+    window.dispatchEvent(keyEvent("keydown", "KeyD", { repeat: true }));
+    window.dispatchEvent(keyEvent("keydown", "KeyD", { ctrlKey: true }));
     window.dispatchEvent(keyEvent("keydown", "Enter"));
+    window.dispatchEvent(keyEvent("keydown", "KeyE")); // 豁口键（E–F 之间没有黑键）
     expect(notes).toHaveLength(0);
     detach();
   });
@@ -76,13 +111,16 @@ describe("attachKeyboardListener", () => {
     const input = document.createElement("input");
     input.type = "text";
     document.body.append(input);
-    input.dispatchEvent(keyEvent("keydown", "KeyQ"));
+    input.dispatchEvent(keyEvent("keydown", "KeyD"));
     expect(notes).toHaveLength(0);
+    // 文本框里按数字也不该切音区
+    input.dispatchEvent(keyEvent("keydown", "Digit3"));
+    expect(activeZone.value).toBe(DEFAULT_ZONE);
 
     const slider = document.createElement("input");
     slider.type = "range";
     document.body.append(slider);
-    slider.dispatchEvent(keyEvent("keydown", "KeyQ"));
+    slider.dispatchEvent(keyEvent("keydown", "KeyD"));
     expect(notes).toHaveLength(1);
 
     input.remove();
@@ -95,7 +133,7 @@ describe("attachKeyboardListener", () => {
     const notes: MidiNote[] = [];
     const detach = attachKeyboardListener((note) => notes.push(note));
     detach();
-    window.dispatchEvent(keyEvent("keydown", "KeyZ"));
+    window.dispatchEvent(keyEvent("keydown", "KeyD"));
     expect(notes).toHaveLength(0);
   });
 });
@@ -113,9 +151,24 @@ describe("KeyboardDiagram key labels", () => {
     const wrapper = mount(KeyboardDiagram, { props: { highlightMidi: null } });
     expect(wrapper.attributes("data-keyboard-mode")).toBe("true");
     const caps = wrapper.findAll(".key-cap").map((node) => node.text());
-    expect(caps).toContain("Z");
-    expect(caps).toContain("Q");
-    expect(caps).toContain("I");
-    expect(caps).toHaveLength(Object.keys(KEY_TO_MIDI).length);
+    expect(caps).toContain("D");
+    expect(caps).toContain("R");
+    expect(caps).toContain(";");
+    // 白键行 11 + 黑键行 6：E / Y / P / Q 是豁口，不标注
+    expect(caps).toHaveLength(17);
+  });
+
+  it("keeps the label switch independent from simulation mode", async () => {
+    setKeyboardMode(true);
+    const wrapper = mount(KeyboardDiagram, { props: { highlightMidi: null } });
+    expect(wrapper.findAll(".key-cap").length).toBeGreaterThan(0);
+
+    setKeyLabels(false);
+    await wrapper.vm.$nextTick();
+    expect(wrapper.find(".key-cap").exists()).toBe(false);
+
+    setKeyLabels(true);
+    await wrapper.vm.$nextTick();
+    expect(wrapper.find(".key-cap").exists()).toBe(true);
   });
 });

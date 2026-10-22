@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { computed } from "vue";
 import { learningPath, nextAction, sightUnlocked, type NextAction } from "../domain/nextStep";
+import { formatMinutes, practiceSummary } from "../domain/practiceLog";
 import type { Profile } from "../domain/profile";
-import { curriculumProgress } from "../practice";
 
 const props = defineProps<{
   profile: Profile;
@@ -12,10 +12,8 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   "open-reading": [];
+  "open-l3-reading": [];
   "open-sight": [];
-  "open-repertoire": [];
-  /** 乐理页支持两种模式：自由练习 / 主线闯关。 */
-  "open-practice": [mode?: "free" | "stages"];
   "open-placement": [];
   "open-error": [];
 }>();
@@ -26,8 +24,11 @@ const bothLocked = computed(() => !props.rightUnlocked && !props.leftUnlocked);
 const sightReady = computed(() => sightUnlocked(props.profile));
 const hasErrors = computed(() => props.profile.errorSnippets.length > 0 && sightReady.value);
 const errorCount = computed(() => props.profile.errorSnippets.length);
-/** 主线闯关进度：已完成关卡 / 总关卡。 */
-const curriculum = computed(() => curriculumProgress(props.profile.curriculumCompleted));
+const practice = computed(() => practiceSummary(props.profile));
+const todayDone = computed(() => practice.value.todayCount > 0);
+const practiceLine = computed(
+  () => `${practice.value.todayCount} 条 · ${formatMinutes(practice.value.todayMs)}`,
+);
 
 /** 主卡按钮的落点：课程/过关都走识谱，视奏走视奏，自评走自评。 */
 function runAction(next: NextAction) {
@@ -37,6 +38,11 @@ function runAction(next: NextAction) {
   }
   if (next.kind === "sight") {
     emit("open-sight");
+    return;
+  }
+  // L3 和弦课要走 L3 入口，不能复用 L2 的「回看最后一课」逻辑。
+  if (next.kind === "lesson" && next.eyebrow === "L3 和弦") {
+    emit("open-l3-reading");
     return;
   }
   emit("open-reading");
@@ -68,6 +74,12 @@ function openSight() {
       </button>
     </header>
 
+    <div class="today-strip" :data-done="todayDone" data-test="today-status">
+      <span class="today-state">{{ todayDone ? "今天已练过" : "今天还没开始" }}</span>
+      <span data-test="today-count">{{ practiceLine }}</span>
+      <span data-test="today-streak">连续 {{ practice.streak }} 天</span>
+    </div>
+
     <div class="dash">
       <section class="block">
         <h2 class="block-title">学习路径</h2>
@@ -87,7 +99,7 @@ function openSight() {
       </section>
 
       <section class="block">
-        <h2 class="block-title">换个练法</h2>
+        <h2 class="block-title">今日练习</h2>
         <ul class="tools">
           <li>
             <button type="button" class="tool" data-test="sight" @click="openSight">
@@ -102,27 +114,6 @@ function openSight() {
               <span class="tool-label">先认谱</span>
             </button>
           </li>
-          <li>
-            <button type="button" class="tool" data-test="repertoire" @click="emit('open-repertoire')">
-              <span class="tool-label">
-                曲库
-                <span v-if="profile.l2Passed" class="tag tag-ready">可挑曲</span>
-              </span>
-            </button>
-          </li>
-          <li>
-            <button type="button" class="tool" data-test="curriculum" @click="emit('open-practice', 'stages')">
-              <span class="tool-label">
-                主线闯关
-                <span class="tag">{{ curriculum.done }}/{{ curriculum.total }}</span>
-              </span>
-            </button>
-          </li>
-          <li>
-            <button type="button" class="tool" data-test="practice" @click="emit('open-practice')">
-              <span class="tool-label">乐理练习</span>
-            </button>
-          </li>
           <li v-if="hasErrors">
             <button type="button" class="tool" data-test="error-book" @click="emit('open-error')">
               <span class="tool-label">
@@ -135,18 +126,6 @@ function openSight() {
         <p v-if="bothLocked" class="note">视奏里只会用到已经认过的五个音，先把它们认准。</p>
       </section>
     </div>
-
-    <footer class="foot">
-      <button
-        v-if="profile.assessment"
-        type="button"
-        class="quiet"
-        data-test="placement"
-        @click="emit('open-placement')"
-      >
-        重做三道自评
-      </button>
-    </footer>
   </div>
 </template>
 
@@ -198,6 +177,35 @@ function openSight() {
   font-size: 0.95rem;
   font-weight: 600;
   cursor: pointer;
+}
+
+/* 今日完成态：不抢主卡的注意力，只把「今天有没有练」说清楚 */
+.today-strip {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.4rem 0.75rem;
+  margin: calc(var(--pb-space-3) * -1) 0 0;
+  padding: 0.55rem 0.8rem;
+  border: 1px solid var(--pb-border-soft);
+  border-radius: var(--pb-radius);
+  background: var(--pb-surface-2);
+  color: var(--pb-muted);
+  font-size: 0.82rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.today-strip[data-done="true"] {
+  border-left: 3px solid var(--pb-ok);
+}
+
+.today-state {
+  color: var(--pb-ink-2);
+  font-weight: 600;
+}
+
+.today-strip[data-done="true"] .today-state {
+  color: var(--pb-ok);
 }
 
 /* ---------- 两栏：路径 + 练法 ---------- */
@@ -350,36 +358,11 @@ function openSight() {
   font-weight: 500;
 }
 
-.tag-ready {
-  background: var(--pb-ok-bg);
-  color: var(--pb-ok);
-}
-
 .block .note {
   margin: var(--pb-space-2) 0 0;
 }
 
-.foot {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--pb-space-2) var(--pb-space-3);
-  padding-top: var(--pb-space-3);
-  border-top: 1px solid var(--pb-border-soft);
-}
-
-.quiet {
-  padding: 0;
-  border: 0;
-  background: transparent;
-  color: var(--pb-muted);
-  font-size: 0.85rem;
-  text-decoration: underline;
-  text-underline-offset: 0.2rem;
-  cursor: pointer;
-}
-
-/* 宽屏：右侧四个入口排成 2×2 卡片，不再是一条长列表 */
+/* 宽屏：右侧入口排成两列卡片，不再是长列表 */
 @media (min-width: 900px) {
   .tools {
     display: grid;

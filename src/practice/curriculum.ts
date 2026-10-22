@@ -6,11 +6,12 @@ import {
 import type { SymbolGroup } from "./theoryContent";
 
 /**
- * 主线闯关：把源项目「一关 5 题、顺序解锁」的结构搬到当前 App。
+ * 专项题组：原来「主线闯关」的 10 组固定题量。
  *
- * 关卡只引用题库类型与范围，不复制题目本身；题目仍由 `createPracticeQuestions`
- * 按 seed 生成，因此每次重练会换题序与干扰项，但知识点与题量固定。
- * 第一关默认解锁，之后每关必须通过上一关。
+ * 主线闯关和 L3 预备课曾经是两套独立进度，同一个知识点要在两个地方各完成一次，
+ * 档案里也存了两份“学到哪”的数组。现在只保留 L3 预备课作为有先后顺序的理论课；
+ * 这里的关卡退化成「专项题组」入口：点开就练，不锁定、不写进度、不要求在
+ * 另一条线里再通关一次。题目仍由 `createPracticeQuestions` 按 seed 生成。
  */
 export type CurriculumStage = {
   id: string;
@@ -23,7 +24,7 @@ export type CurriculumStage = {
   /** 符号关卡的组别；其它题型留空。 */
   symbolGroups?: readonly SymbolGroup[];
   questionCount: number;
-  /** 通过所需答对数。 */
+  /** 通过所需答对数；专项题组只用于结果文案。 */
   passScore: number;
 };
 
@@ -123,19 +124,7 @@ export const CURRICULUM_STAGES: readonly CurriculumStage[] = [
   },
 ];
 
-/** 关卡状态：第一关或上一关已通过时可闯，其余锁定。 */
-export type CurriculumStageState = "done" | "current" | "locked";
-
-export function curriculumStageState(
-  completed: readonly string[],
-  index: number,
-): CurriculumStageState {
-  if (completed.includes(CURRICULUM_STAGES[index]?.id ?? "")) return "done";
-  if (index === 0) return "current";
-  return completed.includes(CURRICULUM_STAGES[index - 1]?.id ?? "") ? "current" : "locked";
-}
-
-/** 关卡题目：固定题量，按 seed 生成后截取，保证每次重练换题序。 */
+/** 专项题组题目：固定题量，按 seed 生成后截取，保证每次重练换题序。 */
 export function createCurriculumStageQuestions(
   stageId: string,
   seed: number,
@@ -145,15 +134,4 @@ export function createCurriculumStageQuestions(
   return createPracticeQuestions(stage.kind, seed, {
     symbolGroups: stage.symbolGroups,
   }).slice(0, stage.questionCount);
-}
-
-/** 已完成关卡数 / 总关卡数，供首页与关卡列表显示。 */
-export function curriculumProgress(completed: readonly string[]): {
-  done: number;
-  total: number;
-} {
-  return {
-    done: CURRICULUM_STAGES.filter((stage) => completed.includes(stage.id)).length,
-    total: CURRICULUM_STAGES.length,
-  };
 }

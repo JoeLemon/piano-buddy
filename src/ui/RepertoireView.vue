@@ -1,8 +1,12 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { audioAvailable, createPreviewPlayer, type PreviewPlayer } from "../audio/preview";
-import type { Profile } from "../domain/profile";
+import type { LessonId, Profile } from "../domain/profile";
+import { routeForSkill, type SkillRoute } from "../domain/skillRoutes";
+import { scoreSegments, sliceScore } from "../domain/sliceScore";
+import { flattenScore } from "../domain/timeline";
 import type { Hand, Score } from "../domain/types";
+import { flatRows, paintGrandProgress, paintScoreProgress } from "../notation/scorePaint";
 import { renderGrandScore, renderScore } from "../notation/renderScore";
 import { L3_PREP_LESSONS } from "../practice";
 import {
@@ -37,7 +41,9 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   "open-reading": [];
-  "open-l3": [];
+  "open-lesson": [lessonId: LessonId];
+  "open-theory": [lessonId: string];
+  "follow-score": [payload: { score: Score; hand: Hand | "BOTH"; title: string }];
 }>();
 
 const catalog = parseCatalog(catalogRaw);
@@ -71,6 +77,10 @@ const audioReady = computed(() => audioAvailable());
 
 let player: PreviewPlayer | null = null;
 let playerPackageId: string | null = null;
+/** 播放到第几个发声音（0 起）；null 表示尚未播放或已回到开头。 */
+const playbackIndex = ref<number | null>(null);
+/** 播放示范没有对错判定，上色只区分「已播放」与「当前音」。 */
+const NO_KEYS: ReadonlySet<string> = new Set();
 
 const ledger = computed(() => migrateProfile(props.profile));
 const mastered = computed(() => masteredSkillIds(ledger.value));
@@ -89,6 +99,14 @@ const missing = computed(() => {
 });
 const readiness = computed(() =>
   missing.value.length === 0 ? "所需技能已齐，可以开始。" : `还差 ${missing.value.length} 项技能。`,
+);
+/** 分段跟弹：两小节一段，避免一上来就是整首。 */
+const segments = computed(() => (selectedScore.value ? scoreSegments(selectedScore.value) : []));
+const selectedSegment = ref(0);
+const activeSegment = computed(() => segments.value[selectedSegment.value] ?? segments.value[0] ?? null);
+/** 缺技能清单里，每一项能落到哪一节具体课；没有课的显示「暂无微课」。 */
+const missingRoutes = computed(() =>
+  missing.value.map((skill) => ({ skill, route: routeForSkill(skill.id) })),
 );
 /** L1/L2 有现成微课；L3 有预备课，L4+ 仍只有技能规则。 */
 const canPracticeBasics = computed(() => missing.value.some((skill) => skill.level <= 2));
@@ -191,20 +209,81 @@ function drawStaff() {
       const only: Hand = score.hands.includes("RH") ? "RH" : "LH";
       renderScore(element, score, only, showFingers.value);
     }
+    // 重绘会把上色一起清掉（切指法、换曲），这里按播放位置补回。
+    paintPlayback(playbackIndex.value);
   } catch (error) {
     renderError.value = error instanceof Error ? error.message : "谱面渲染失败";
   }
+}
+
+/** 双手谱用大谱表上色，单谱表用单行上色。 */
+function isGrandScore(score: Score): boolean {
+  return score.hands.includes("RH") && score.hands.includes("LH");
+}
+
+/**
+ * 播放示范时的颜色进度：已播放的音转暖米灰，正在响的音金色。
+ * index 是播放器的发声音序号（与谱面发声音顺序一致）；null 表示回到开头、清空上色。
+ */
+function paintPlayback(index: number | null) {
+  const element = staffEl.value;
+  const score = selectedScore.value;
+  if (!element || !score) return;
+  if (isGrandScore(score)) {
+    const active = index == null ? null : flattenScore(score)[index] ?? null;
+    paintGrandProgress(element, score, {
+      timelineCount: index == null ? 0 : index + 1,
+      correctKeys: NO_KEYS,
+      wrongKeys: NO_KEYS,
+      activeKey: active ? `${active.hand}:${active.id}` : null,
+    });
+    return;
+  }
+  const only: Hand = score.hands.includes("RH") ? "RH" : "LH";
+  if (index == null) {
+    paintScoreProgress(element, score, only, { playedCount: 0, correctIds: NO_KEYS, wrongIds: NO_KEYS });
+    return;
+  }
+  const active = flatRows(score, only).find((row) => row.sounding === index) ?? null;
+  paintScoreProgress(element, score, only, {
+    playedCount: index + 1,
+    correctIds: NO_KEYS,
+    wrongIds: NO_KEYS,
+    activeId: active?.id ?? null,
+  });
 }
 
 function selectArrangement(arrangement: CatalogArrangement) {
   if (arrangement.arrangementId === selectedId.value) return;
   stopPlayback();
   selectedId.value = arrangement.arrangementId;
+  selectedSegment.value = 0;
   position.value = 0;
   totalBeats.value = 0;
   playing.value = false;
   renderError.value = "";
   ensurePlayer();
+}
+
+/** 把当前段切成一份独立谱子，交给视奏页跟弹/评测。 */
+function followSegment() {
+  const score = selectedScore.value;
+  const segment = activeSegment.value;
+  if (!score || !segment) return;
+  const title = `${selected.value?.song.title ?? "曲目"} · ${selected.value?.arrangement.name ?? ""}`;
+  emit("follow-score", {
+    score: sliceScore(score, segment.start, segment.end, hand.value),
+    hand: hand.value,
+    title: `${title} · ${segment.label}`,
+  });
+}
+
+function openSkillRoute(route: SkillRoute) {
+  if (route.kind === "theory") {
+    emit("open-theory", route.lessonId);
+    return;
+  }
+  emit("open-lesson", route.lessonId);
 }
 
 function ensurePlayer(): PreviewPlayer | null {
@@ -215,6 +294,11 @@ function ensurePlayer(): PreviewPlayer | null {
 
   stopPlayback();
   const next = createPreviewPlayer(score, hand.value, score.bpm, {
+    onNote: (index) => {
+      // 播放器按发声音逐个回调，正好复用谱面的着色逻辑。
+      playbackIndex.value = index;
+      paintPlayback(index);
+    },
     onProgress: (beat) => {
       position.value = beat;
       if (player) totalBeats.value = player.totalBeats;
@@ -222,6 +306,8 @@ function ensurePlayer(): PreviewPlayer | null {
     onEnd: () => {
       playing.value = false;
       if (player) position.value = player.totalBeats;
+      // 播完保留整条上色，最后一音不再标成「正在响」。
+      paintPlayback(playbackIndex.value);
     },
   });
   player = next;
@@ -236,6 +322,8 @@ function stopPlayback() {
   player = null;
   playerPackageId = null;
   playing.value = false;
+  playbackIndex.value = null;
+  paintPlayback(null);
 }
 
 function togglePlay() {
@@ -253,6 +341,9 @@ function restart() {
   next.play();
   position.value = 0;
   playing.value = next.playing;
+  // 从头播：先清掉上一轮的颜色，新音会随播放重新上色。
+  playbackIndex.value = null;
+  paintPlayback(null);
 }
 
 function seek(beat: number) {
@@ -261,6 +352,9 @@ function seek(beat: number) {
   next.seek(beat);
   position.value = beat;
   playing.value = next.playing;
+  // 跳到新位置后，旧的上色与当前位置不再对应，先清空再由播放回调重建。
+  playbackIndex.value = null;
+  paintPlayback(null);
 }
 
 function onSeekInput(event: Event) {
@@ -281,6 +375,9 @@ function setHand(value: Hand | "BOTH") {
   totalBeats.value = next.totalBeats;
   position.value = next.positionBeats;
   playing.value = next.playing;
+  // 换手后发声音序号整体变了，清掉旧上色。
+  playbackIndex.value = null;
+  paintPlayback(null);
 }
 </script>
 
@@ -369,6 +466,30 @@ function setHand(value: Hand | "BOTH") {
         </div>
       </div>
 
+      <div class="segment-bar" data-test="repertoire-segments">
+        <label class="toggle-label" for="repertoire-segment">分段</label>
+        <select
+          id="repertoire-segment"
+          v-model.number="selectedSegment"
+          data-test="repertoire-segment"
+          :disabled="segments.length === 0"
+        >
+          <option v-for="segment in segments" :key="segment.index" :value="segment.index">
+            {{ segment.label }}
+          </option>
+        </select>
+        <button
+          type="button"
+          class="primary"
+          data-test="repertoire-follow"
+          :disabled="!selectedScore || !activeSegment"
+          @click="followSegment"
+        >
+          跟弹本段
+        </button>
+        <span class="segment-hint">只评这一段；练完可在复盘里回到曲库。</span>
+      </div>
+
       <div class="staff" ref="staffEl" data-test="repertoire-staff"></div>
       <p v-if="renderError" class="warn">{{ renderError }}</p>
 
@@ -401,9 +522,21 @@ function setHand(value: Hand | "BOTH") {
           <template v-if="missing.length > 0">
             <h3>补短板顺序</h3>
             <ol class="skill-list missing">
-              <li v-for="skill in missing" :key="skill.id">
-                <span>{{ skill.name }}</span>
-                <small>L{{ skill.level }}</small>
+              <li v-for="item in missingRoutes" :key="item.skill.id">
+                <span class="skill-name">
+                  {{ item.skill.name }}
+                  <button
+                    v-if="item.route"
+                    type="button"
+                    class="skill-route"
+                    :data-test="`skill-route-${item.skill.id}`"
+                    @click="openSkillRoute(item.route)"
+                  >
+                    {{ item.route.label }}
+                  </button>
+                  <small v-else class="no-lesson">暂无微课</small>
+                </span>
+                <small>L{{ item.skill.level }}</small>
               </li>
             </ol>
             <button
@@ -416,14 +549,10 @@ function setHand(value: Hand | "BOTH") {
               回识谱课补 L1/L2
             </button>
             <template v-if="hasL3Missing">
-              <button
-                type="button"
-                class="practice"
-                data-test="repertoire-l3"
-                @click="emit('open-l3')"
-              >
-                进入 L3 预备课 · 已学 {{ l3CompletedCount }}/{{ L3_PREP_LESSONS.length }}
-              </button>
+              <!-- L3 技能走上面的直达按钮；这里只补充预备课与 L4+ 的边界说明。 -->
+              <p class="muted" data-test="repertoire-l3">
+                L3 技能可点上面的按钮直达对应课；乐理预备课在「学习 · 乐理预备课」（已学 {{ l3CompletedCount }}/{{ L3_PREP_LESSONS.length }}）。
+              </p>
               <p class="muted" data-test="repertoire-l3-gap">
                 预备课完成只记「学习中」，不会直接跳过曲目过关。
               </p>
@@ -664,6 +793,51 @@ button.primary {
   font-size: 0.85rem;
 }
 
+/* 分段跟弹：和播放条分开，避免用户以为「跟弹」只是换个速度 */
+.segment-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--pb-space-2) var(--pb-space-3);
+  margin: -0.25rem 0 0.9rem;
+  padding: var(--pb-space-2) var(--pb-space-3);
+  border: 1px dashed var(--pb-border-soft);
+  border-radius: var(--pb-radius);
+}
+
+.segment-bar select {
+  padding: 0.3rem 0.45rem;
+  border: 1px solid var(--pb-border-soft);
+  border-radius: var(--pb-radius);
+  background: var(--pb-surface);
+  color: var(--pb-ink);
+  font-size: 0.85rem;
+}
+
+.segment-hint {
+  color: var(--pb-muted);
+  font-size: 0.78rem;
+}
+
+.skill-name {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.skill-route {
+  padding: 0.15rem 0.45rem;
+  border-color: var(--pb-accent);
+  border-radius: var(--pb-radius-pill);
+  font-size: 0.75rem;
+}
+
+.no-lesson {
+  color: var(--pb-muted);
+  font-size: 0.75rem;
+}
+
 .info-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
@@ -682,9 +856,10 @@ button.primary {
 
 .skill-list li {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
-  gap: 0.75rem;
+  gap: 0.4rem 0.75rem;
   padding: 0.3rem 0;
   border-bottom: 1px solid var(--pb-border-soft);
   color: var(--pb-muted);

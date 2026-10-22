@@ -4,9 +4,10 @@ import AppShell from "../src/ui/AppShell.vue";
 
 const sections = [
   { id: "today", label: "今日" },
-  { id: "course", label: "课程" },
+  { id: "learn", label: "学习" },
+  { id: "practice", label: "练习" },
   { id: "library", label: "曲库" },
-  { id: "theory", label: "乐理" },
+  { id: "me", label: "我的" },
 ] as const;
 
 function shell(props: Record<string, unknown> = {}) {
@@ -20,10 +21,10 @@ function shell(props: Record<string, unknown> = {}) {
 
 describe("AppShell 导航", () => {
   it("renders the section tabs and reports the active one", () => {
-    const wrapper = shell({ sections, activeSection: "course" });
+    const wrapper = shell({ sections, activeSection: "learn" });
     const tabs = wrapper.findAll(".tab");
-    expect(tabs.map((tab) => tab.text())).toEqual(["今日", "课程", "曲库", "乐理"]);
-    expect(wrapper.get('[data-section=course]').attributes("aria-current")).toBe("page");
+    expect(tabs.map((tab) => tab.text())).toEqual(["今日", "学习", "练习", "曲库", "我的"]);
+    expect(wrapper.get('[data-section=learn]').attributes("aria-current")).toBe("page");
     expect(wrapper.get('[data-section=today]').attributes("aria-current")).toBeUndefined();
   });
 
@@ -34,13 +35,13 @@ describe("AppShell 导航", () => {
   });
 
   it("hides the tabs in immersive mode", () => {
-    const wrapper = shell({ sections: [], activeSection: "course" });
+    const wrapper = shell({ sections: [], activeSection: "learn" });
     expect(wrapper.findAll(".tab")).toHaveLength(0);
   });
 
   it("shows the section breadcrumb instead of the brand inside a section", () => {
-    const wrapper = shell({ section: "课程" });
-    expect(wrapper.get(".crumb-section").text()).toBe("课程");
+    const wrapper = shell({ section: "学习" });
+    expect(wrapper.get(".crumb-section").text()).toBe("学习");
     expect(wrapper.find(".brand").exists()).toBe(false);
   });
 
@@ -72,6 +73,20 @@ describe("AppShell 设置抽屉", () => {
     expect(wrapper.emitted("toggle-keyboard")).toHaveLength(1);
     await drawer.get("[data-test=toggle-theme]").trigger("click");
     expect(wrapper.emitted("toggle-theme")).toHaveLength(1);
+  });
+
+  it("shows the new key map and a separate key-label switch", async () => {
+    const wrapper = shell({ keyboardMode: true, keyLabels: true });
+    await wrapper.get("[data-test=open-settings]").trigger("click");
+    const drawer = wrapper.get("[data-test=settings]");
+    // 说明文案换成 A 行白键 / Q 行黑键 / 数字键切音区
+    expect(drawer.get("[data-test=keyboard-hint]").text()).toContain("D 永远是 C");
+    expect(drawer.get("[data-test=keyboard-hint]").text()).toContain("1–7");
+
+    const labels = drawer.get("[data-test=toggle-key-labels]");
+    expect(labels.text()).toContain("按键标注 开");
+    await labels.trigger("click");
+    expect(wrapper.emitted("toggle-key-labels")).toHaveLength(1);
   });
 
   it("keeps the device chip actionable when nothing is connected", async () => {

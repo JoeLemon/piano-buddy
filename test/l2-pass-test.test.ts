@@ -141,7 +141,8 @@ describe("L2 pass test", () => {
 
     await wrapper.get("[data-test=continue]").trigger("click");
     await untilText(wrapper, "5 分钟视奏", true);
-    expect(wrapper.text()).toContain("L2 也过了");
+    // 过完 L2 后主线指向 L3 和弦，而不是直接跳到视奏。
+    expect(wrapper.text()).toContain("L3 · 双音");
     expect(wrapper.text()).not.toContain("%");
   });
 

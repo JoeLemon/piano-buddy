@@ -12,8 +12,8 @@ import {
 import { parsePitchLabel, pitchLabel, pitchToMidi } from "../domain/pitch";
 import { l2FindHand, recordL2FindKey, type Profile } from "../domain/profile";
 import { flattenScore } from "../domain/timeline";
-import type { Hand, PositionId, Score } from "../domain/types";
-import { fingerFor, pitchesFor } from "../domain/vocabulary";
+import type { Hand, Score } from "../domain/types";
+import { fingerFor } from "../domain/vocabulary";
 import { subscribeMidi, type MidiNote } from "../midi/access";
 import {
   grandProgressRatio,
@@ -132,15 +132,6 @@ const lineLead = computed(() => {
 const sounding = computed(() => currentTargets());
 const currentNote = computed(() => sounding.value[noteIndex.value] ?? null);
 const highlightMidi = computed(() => currentNote.value?.midi ?? null);
-const activeHand = computed<Hand | null>(() => currentNote.value?.hand ?? null);
-const activeFinger = computed<number | null>(() => currentNote.value?.finger ?? null);
-/** 琴键图上的手位：让手搭在这条短句真正在用的五个键上（F/G 位、平移后换位）。 */
-const diagramPosition = computed<PositionId>(() => {
-  const current = score.value;
-  const note = currentNote.value;
-  if (!current || !note) return "C";
-  return positionForHand(current, note.hand, note.key);
-});
 const progress = computed(() => {
   const current = score.value;
   if (!current || !playable.value) return 0;
@@ -206,7 +197,9 @@ function presentLine(profile = profileState.value) {
 }
 
 function onNote(note: MidiNote) {
-  if (!props.midiConnected || note.kind !== "on" || !isPlayable(profileState.value.lessonId)) return;
+  // 屏幕琴键（鼠标 / 触摸点按）自己就是输入源，不需要先连 MIDI。
+  const local = note.source === "screen";
+  if ((!props.midiConnected && !local) || note.kind !== "on" || !isPlayable(profileState.value.lessonId)) return;
   const expected = sounding.value[noteIndex.value];
   if (!expected) return;
   if (note.midi !== expected.midi) {
@@ -325,16 +318,18 @@ function drawStaff() {
   applyPaint();
 }
 
-/** 给谱面上色（弹过/弹对/弹错），并把滚动推进到当前待弹音。 */
+/** 给谱面上色（弹过/弹对/弹错/当前音），并把滚动推进到当前待弹音。 */
 function applyPaint() {
   const el = staffEl.value;
   const current = score.value;
   if (!el || !current || !playable.value) return;
+  const active = currentNote.value;
   if (grand.value) {
     paintGrandProgress(el, current, {
       timelineCount: noteIndex.value,
       correctKeys,
       wrongKeys,
+      activeKey: active ? `${active.hand}:${active.key}` : null,
     });
     scrollGrandToCursor(el, current, noteIndex.value);
     return;
@@ -343,6 +338,7 @@ function applyPaint() {
     playedCount: noteIndex.value,
     correctIds: correctKeys,
     wrongIds: wrongKeys,
+    activeId: active?.key ?? null,
   });
   scrollScoreToCursor(el, current, hand.value, noteIndex.value);
 }
@@ -441,37 +437,6 @@ function soundingNotes(current: Score, nextHand: Hand): { key: string; label: st
   }
   return notes;
 }
-
-/** 琴键图上先试的手位顺序：C 位优先，再看平移后的 D 位与 F/G 位。 */
-const DIAGRAM_POSITIONS: readonly PositionId[] = ["C", "D-shift", "F", "G"];
-
-/**
- * 当前音该用哪个手位：既要包住这个音，还要和谱上印的指法对得上；
- * 同样合法的位里选能覆盖更多后续音的，这样一条短句挪位后图也跟着挪。
- */
-function positionForHand(current: Score, nextHand: Hand, fromKey: string): PositionId {
-  const notes = flattenScore(current).filter((entry) => entry.hand === nextHand);
-  const index = notes.findIndex((entry) => entry.id === fromKey || `${entry.hand}:${entry.id}` === fromKey);
-  const rest = index < 0 ? notes : notes.slice(index);
-  const first = rest[0];
-  if (!first) return "C";
-  const pitch = parsePitchLabel(first.label);
-  let best: { position: PositionId; weight: number } | null = null;
-  for (const position of DIAGRAM_POSITIONS) {
-    const set = new Set(pitchesFor(position, nextHand).map(pitchToMidi));
-    if (!set.has(first.midi)) continue;
-    let fingerMatch = 0;
-    try {
-      fingerMatch = fingerFor(position, nextHand, pitch) === first.finger ? 1 : 0;
-    } catch {
-      continue;
-    }
-    const coverage = rest.reduce((count, entry) => (set.has(entry.midi) ? count + 1 : count), 0);
-    const weight = fingerMatch * 1000 + coverage;
-    if (!best || weight > best.weight) best = { position, weight };
-  }
-  return best?.position ?? "C";
-}
 </script>
 
 <template>
@@ -497,10 +462,7 @@ function positionForHand(current: Score, nextHand: Hand, fromKey: string): Posit
     <div class="keyboard-panel">
       <KeyboardDiagram
         :highlight-midi="highlightMidi"
-        :active-hand="activeHand"
-        :active-finger="activeFinger"
-        :highlight-seq="noteIndex"
-        :position="diagramPosition"
+        @note="onNote"
       />
     </div>
   </div>
@@ -573,11 +535,9 @@ function positionForHand(current: Score, nextHand: Hand, fromKey: string): Posit
 
 /* 键盘区：深绿舞台底，让米白琴键浮在上面（规范 §4.5） */
 .keyboard-panel {
-  display: flex;
-  justify-content: center;
-  width: fit-content;
-  max-width: 100%;
-  margin: var(--pb-space-3) auto 0;
+  width: 100%;
+  box-sizing: border-box;
+  margin: var(--pb-space-3) 0 0;
   padding: var(--pb-space-2) var(--pb-space-3);
   border: 1px solid var(--pb-key-gap);
   border-radius: var(--pb-radius);

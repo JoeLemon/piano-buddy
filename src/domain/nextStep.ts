@@ -34,8 +34,8 @@ export type PathStage = {
 };
 
 /**
- * 首页主卡：按「自评 → L1 → L2 → 视奏」的顺序给出唯一建议动作。
- * 前三步是必修，视奏在解锁后成为日常练习的默认落点。
+ * 首页主卡：按「自评 → L1 → L2 → L3 → 视奏」的顺序给出唯一建议动作。
+ * L3 是 L2 之后的和弦识谱课；L3 预备课仍可单独补，但不再阻塞主线。
  */
 export function nextAction(profile: Profile): NextAction {
   if (!profile.assessment) {
@@ -61,7 +61,7 @@ export function nextAction(profile: Profile): NextAction {
 
   if (profile.lessonId === "L1-test") {
     if (profile.l1RightPassed && profile.l1LeftPassed) {
-      return sightOrL2(profile);
+      return afterL1(profile);
     }
     const hands = profile.l1RightPassed ? "左手" : profile.l1LeftPassed ? "右手" : "右手和左手";
     return {
@@ -74,15 +74,36 @@ export function nextAction(profile: Profile): NextAction {
     };
   }
 
+  if (profile.lessonId.startsWith("L3R")) {
+    if (profile.l3Passed) return sightAction();
+    if (profile.lessonId === "L3R-test") {
+      return {
+        kind: "test",
+        eyebrow: "L3 过关",
+        title: "L3 过关测试 · 双手",
+        detail: "带三和弦与临时升降的双手谱。音高错 ≤ 3，节奏中断 ≤ 1。",
+        cta: "开始过关",
+        goal: "L3 和弦",
+      };
+    }
+    return {
+      kind: "lesson",
+      eyebrow: "L3 和弦",
+      title: `L3 · ${lessonStepLabel(profile.lessonId)}`,
+      cta: "继续这一课",
+      goal: lessonGoalText(profile),
+    };
+  }
+
   if (profile.lessonId.startsWith("L2")) {
     // 过完 L2 后 lessonId 仍停在 L2-test，所以先看 l2Passed，否则会一直让人重考。
-    if (profile.l2Passed) return sightOrL2(profile);
+    if (profile.l2Passed) return afterL1(profile);
     if (profile.lessonId === "L2-test") {
       return {
         kind: "test",
         eyebrow: "L2 过关",
         title: "过关测试 · 双手",
-        detail: "新的双手 4 小节谱，过了视奏升级为双手。",
+        detail: "新的双手 4 小节谱，过了可以进入 L3 和弦。",
         cta: "开始过关",
         goal: handStateText(profile),
       };
@@ -96,7 +117,7 @@ export function nextAction(profile: Profile): NextAction {
     };
   }
 
-  if (profile.l1RightPassed && profile.l1LeftPassed) return sightOrL2(profile);
+  if (profile.l1RightPassed && profile.l1LeftPassed) return afterL1(profile);
 
   return {
     kind: "lesson",
@@ -107,18 +128,8 @@ export function nextAction(profile: Profile): NextAction {
   };
 }
 
-/** 两手都过了 L1 之后：还没开 L2 就推 L2，过了 L2 就让视奏当日常。 */
-function sightOrL2(profile: Profile): NextAction {
-  if (profile.l2Passed) {
-    return {
-      kind: "sight",
-      eyebrow: "今日练习",
-      title: "5 分钟视奏",
-      detail: "L2 也过了。视奏现在是双手的，每天一条就够了。",
-      cta: "开始视奏",
-      goal: "一条最多 2 遍",
-    };
-  }
+/** 两手都过了 L1 之后：先开 L2，过 L2 后进 L3，L3 过了视奏当日常。 */
+function afterL1(profile: Profile): NextAction {
   if (!canEnterL2(profile)) {
     return {
       kind: "lesson",
@@ -126,6 +137,29 @@ function sightOrL2(profile: Profile): NextAction {
       title: "继续 L1",
       cta: "继续这一课",
       goal: lessonGoalText(profile),
+    };
+  }
+  if (profile.l2Passed) {
+    if (profile.l3Passed) return sightAction();
+    if (profile.lessonId === "L3R-test") {
+      return {
+        kind: "test",
+        eyebrow: "L3 过关",
+        title: "L3 过关测试 · 双手",
+        detail: "带三和弦与临时升降的双手谱。音高错 ≤ 3，节奏中断 ≤ 1。",
+        cta: "开始过关",
+        goal: "L3 和弦",
+      };
+    }
+    const started = profile.lessonId?.startsWith("L3R");
+    const currentId = started ? profile.lessonId! : "L3R-1";
+    return {
+      kind: "lesson",
+      eyebrow: "L3 和弦",
+      title: `L3 · ${lessonStepLabel(currentId)}`,
+      detail: started ? undefined : "L2 已过关。接下来练双音、三和弦与临时升降。",
+      cta: started ? "继续这一课" : "开始 L3",
+      goal: started ? lessonGoalText(profile) : "短句 0/2",
     };
   }
   return {
@@ -138,6 +172,17 @@ function sightOrL2(profile: Profile): NextAction {
   };
 }
 
+function sightAction(): NextAction {
+  return {
+    kind: "sight",
+    eyebrow: "今日练习",
+    title: "5 分钟视奏",
+    detail: "L3 也过了。视奏里会出现和弦与临时升降，每天一条就够了。",
+    cta: "开始视奏",
+    goal: "一条最多 2 遍",
+  };
+}
+
 function handStateText(profile: Profile): string {
   const right = profile.l1RightPassed ? "右手 ✓" : "右手待过";
   const left = profile.l1LeftPassed ? "左手 ✓" : "左手待过";
@@ -146,14 +191,16 @@ function handStateText(profile: Profile): string {
 
 /**
  * 学习路径条：把「学到哪儿」画成四段，进度不再靠用户自己拼。
- * L3 只统计预备课完成数，仍然不等于技能过关。
+ * L3 段看和弦识谱是否过关；预备课完成数只作为补充说明。
  */
 export function learningPath(profile: Profile): PathStage[] {
   const l1Done = profile.l1RightPassed && profile.l1LeftPassed;
   const l2Done = profile.l2Passed;
+  const l3Done = profile.l3Passed;
+  const l3PrepDone = profile.l3PrepCompleted.length;
   const l3Total = L3_PREP_LESSONS.length;
-  const l3Done = profile.l3PrepCompleted.length;
   const lessonId = profile.lessonId ?? "";
+  const l3Started = lessonId.startsWith("L3R") || l3PrepDone > 0;
 
   return [
     {
@@ -171,15 +218,24 @@ export function learningPath(profile: Profile): PathStage[] {
     },
     {
       id: "L3",
-      name: "L3 预备",
-      caption: l3Done > 0 ? `已上 ${l3Done}/${l3Total}` : "",
-      state: l3Done >= l3Total && l3Total > 0 ? "done" : l3Done > 0 ? "current" : "todo",
+      name: "L3 和弦",
+      caption: l3Done
+        ? "已过关"
+        : l3Started
+          ? l3PrepDone > 0
+            ? `正在学 · 预备 ${l3PrepDone}/${l3Total}`
+            : "正在学"
+          : l2Done
+            ? "可以开始"
+            : "",
+      state: l3Done ? "done" : l2Done || l3Started ? "current" : "todo",
     },
     {
       id: "library",
       name: "曲库",
-      caption: l2Done ? "可以挑曲子" : "",
-      state: "todo",
+      // 曲库不是“最后才能进”的关卡：L2 后就可以挑，L3 后正式进入曲目闭环。
+      caption: l3Done ? "挑一首曲子弹" : l2Done ? "可以边学边挑" : "",
+      state: l3Done ? "current" : "todo",
     },
   ];
 }

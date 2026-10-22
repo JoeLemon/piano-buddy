@@ -382,6 +382,63 @@ describe("App", () => {
     await untilText(wrapper, "三道自评");
   });
 
+  it("returns to the section a lesson was entered from", async () => {
+    await saveProfile({
+      ...initialProfile(),
+      assessment: { knowsTreble: true, knowsBass: true, keepsPulse: true },
+      lessonId: "L1-1",
+    });
+    const wrapper = mount(App);
+    await untilText(wrapper, "5 分钟视奏");
+
+    // 从「学习」进入识谱课，返回应落在学习页，而不是被丢回今日。
+    await wrapper.get("[data-section=learn]").trigger("click");
+    await untilText(wrapper, "识谱主线");
+    await wrapper.get("[data-test=learn-reading]").trigger("click");
+    await untilText(wrapper, "跟着节拍器敲任何一个键");
+    await wrapper.get("[data-test=home]").trigger("click");
+    await untilText(wrapper, "识谱主线");
+    expect(wrapper.get("[data-section=learn]").attributes("aria-current")).toBe("page");
+  });
+
+  it("returns to the section when a pass test was started from there", async () => {
+    await saveProfile({
+      ...initialProfile(),
+      assessment: { knowsTreble: true, knowsBass: true, keepsPulse: true },
+      lessonId: "L1-test",
+    });
+    const wrapper = mount(App);
+    await untilText(wrapper, "5 分钟视奏");
+
+    // 课位停在过关节点时，点「识谱主线」会直接进过关测试；返回仍应回到学习页。
+    await wrapper.get("[data-section=learn]").trigger("click");
+    await untilText(wrapper, "识谱主线");
+    await wrapper.get("[data-test=learn-reading]").trigger("click");
+    await untilText(wrapper, "过关测试");
+    await wrapper.get("[data-test=home]").trigger("click");
+    await untilText(wrapper, "识谱主线");
+    expect(wrapper.get("[data-section=learn]").attributes("aria-current")).toBe("page");
+  });
+
+  it("returns to practice when sight reading was opened from there", async () => {
+    await saveProfile({
+      ...initialProfile(),
+      assessment: { knowsTreble: true, knowsBass: true, keepsPulse: true },
+      lessonId: "L1-1",
+      l1RightPassed: true,
+    });
+    const wrapper = mount(App);
+    await untilText(wrapper, "5 分钟视奏");
+
+    await wrapper.get("[data-section=practice]").trigger("click");
+    await untilText(wrapper, "专项题组");
+    await wrapper.get("[data-test=practice-sight]").trigger("click");
+    await untilText(wrapper, "请连接 MIDI 键盘");
+    await wrapper.get("[data-test=home]").trigger("click");
+    await untilText(wrapper, "专项题组");
+    expect(wrapper.get("[data-section=practice]").attributes("aria-current")).toBe("page");
+  });
+
   it("does not unlock the right hand after three pitch errors, and shows one sentence", async () => {
     await saveProfile(initialProfile());
     vi.useFakeTimers({ toFake: ["setTimeout", "setInterval", "clearTimeout", "clearInterval"] });

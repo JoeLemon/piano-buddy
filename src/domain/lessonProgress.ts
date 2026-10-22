@@ -4,6 +4,7 @@ export type LessonStepId = NonNullable<Profile["lessonId"]>;
 
 const L1_STEPS: readonly LessonStepId[] = ["L1-1", "L1-2", "L1-3", "L1-4", "L1-test"];
 const L2_STEPS: readonly LessonStepId[] = ["L2-1", "L2-2", "L2-3", "L2-4", "L2-5", "L2-6", "L2-test"];
+const L3_STEPS: readonly LessonStepId[] = ["L3R-1", "L3R-2", "L3R-3", "L3R-4", "L3R-test"];
 
 const STEP_LABELS: Record<LessonStepId, string> = {
   "L1-1": "跟拍",
@@ -18,13 +19,19 @@ const STEP_LABELS: Record<LessonStepId, string> = {
   "L2-5": "G 五指",
   "L2-6": "五指平移",
   "L2-test": "过关",
+  "L3R-1": "双音",
+  "L3R-2": "右手三和弦",
+  "L3R-3": "左手三和弦",
+  "L3R-4": "临时升降",
+  "L3R-test": "L3 过关",
 };
 
 const TAP_GOAL = 8;
 export const FIND_GOAL = 8;
 const LINE_GOAL = 2;
 
-export function lessonSteps(level: 1 | 2 = 1): readonly LessonStepId[] {
+export function lessonSteps(level: 1 | 2 | 3 = 1): readonly LessonStepId[] {
+  if (level === 3) return L3_STEPS;
   return level === 2 ? L2_STEPS : L1_STEPS;
 }
 
@@ -34,7 +41,11 @@ export function lessonStepLabel(id: LessonStepId): string {
 
 export function currentLessonIndex(profile: Profile): number {
   if (!profile.lessonId) return -1;
-  const steps = profile.lessonId.startsWith("L2") ? L2_STEPS : L1_STEPS;
+  const steps = profile.lessonId.startsWith("L3R")
+    ? L3_STEPS
+    : profile.lessonId.startsWith("L2")
+      ? L2_STEPS
+      : L1_STEPS;
   return steps.indexOf(profile.lessonId);
 }
 
@@ -63,6 +74,13 @@ export function lessonGoalText(profile: Profile): string {
       return `找键 ${profile.findCorrect}/${FIND_GOAL * 2}`;
     case "L2-test":
       return "过关测试";
+    case "L3R-1":
+    case "L3R-2":
+    case "L3R-3":
+    case "L3R-4":
+      return `短句 ${profile.linesCompleted}/${LINE_GOAL}`;
+    case "L3R-test":
+      return "L3 过关测试";
     default:
       return "";
   }
@@ -82,11 +100,19 @@ export function lessonAdvanceCopy(
   if (from === "L2-4" && to === "L2-5") return "F 五指过了。接下来练 G 五指。";
   if (from === "L2-5" && to === "L2-6") return "G 五指过了。接下来把整段挪一次手位。";
   if (from === "L2-6" && to === "L2-test") return "五指平移过了。准备 L2 过关测试。";
+  if (from === "L3R-1" && to === "L3R-2") return "双音过了。接下来用右手弹三和弦。";
+  if (from === "L3R-2" && to === "L3R-3") return "右手三和弦过了。换左手。";
+  if (from === "L3R-3" && to === "L3R-4") return "左手三和弦过了。接下来认临时升降。";
+  if (from === "L3R-4" && to === "L3R-test") return "临时升降过了。准备 L3 过关测试。";
   return "";
 }
 
 export function homeLessonLabel(profile: Profile): string {
   if (!profile.lessonId) return "还没开始";
+  if (profile.lessonId.startsWith("L3R")) {
+    if (profile.l3Passed) return "L3 已通过";
+    return `当前：${STEP_LABELS[profile.lessonId]}`;
+  }
   if (profile.lessonId.startsWith("L2")) {
     if (profile.l2Passed) return "L2 已通过";
     return `当前：${STEP_LABELS[profile.lessonId]}`;

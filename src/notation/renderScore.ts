@@ -1,6 +1,7 @@
 import { Factory, Renderer, Voice, type StemmableNote } from "vexflow";
-import { pitchLabel, pitchToMidi } from "../domain/pitch";
-import type { Clef, Duration, Hand, Measure, NoteEvent, Score, Step } from "../domain/types";
+import { pitchToMidi } from "../domain/pitch";
+import type { Clef, Duration, Hand, KeySignature, Measure, NoteEvent, Score, Step } from "../domain/types";
+import { keyAlteration } from "../domain/vocabulary";
 
 const WHITE_STEPS: readonly Step[] = ["C", "D", "E", "F", "G", "A", "B"];
 const BLACK_STEPS: readonly Step[] = ["C", "D", "F", "G", "A"];
@@ -98,7 +99,7 @@ export function renderScore(element: HTMLElement, score: Score, hand: Hand, show
   easy.set({ clef: stave.clef, time });
 
   stave.measures.forEach((measure, index) => {
-    const line = measure.notes.map((note) => noteToken(note, stave.clef)).join(", ");
+    const line = measureTokens(measure, stave.clef, score.keySignature).join(", ");
     if (!line) return;
     const notes = easy.notes(line, { clef: stave.clef });
     if (showFingers) addFingers(factory, notes, measure);
@@ -159,8 +160,8 @@ export function renderGrandScore(element: HTMLElement, score: Score, showFingers
   for (let index = 0; index < measureCount; index += 1) {
     const rightMeasure = right.measures[index];
     const leftMeasure = left.measures[index];
-    const rightLine = rightMeasure.notes.map((note) => noteToken(note, right.clef)).join(", ");
-    const leftLine = leftMeasure.notes.map((note) => noteToken(note, left.clef)).join(", ");
+    const rightLine = measureTokens(rightMeasure, right.clef, score.keySignature).join(", ");
+    const leftLine = measureTokens(leftMeasure, left.clef, score.keySignature).join(", ");
     if (!rightLine || !leftLine) continue;
 
     const rightNotes = easy.notes(rightLine, { clef: right.clef });
@@ -263,9 +264,26 @@ function trimCanvas(host: HTMLElement): void {
   }
 }
 
-function noteToken(note: NoteEvent, clef: Clef): string {
-  const duration = VEX_DURATION[note.duration];
-  if (note.pitches.length === 0) return `${restPitch(clef)}/${duration}`;
-  if (note.pitches.length === 1) return `${pitchLabel(note.pitches[0])}/${duration}`;
-  return `(${note.pitches.map((pitch) => pitchLabel(pitch)).join(" ")})/${duration}`;
+/**
+ * 一小节的 token 串。VexFlow 的 EasyScore 拿到 keySignature 后不会自己补还原号，
+ * 所以这里维护「本小节当前生效的升降」：调号先铺底，遇到同音高的临时记号就写入，
+ * 需要还原时显式加 `n`。这样 L3 的临时升降谱才能正确显示还原记号。
+ */
+function measureTokens(measure: Measure, clef: Clef, key: KeySignature): string[] {
+  const state = new Map<string, number>();
+  return measure.notes.map((note) => {
+    const duration = VEX_DURATION[note.duration];
+    if (note.pitches.length === 0) return `${restPitch(clef)}/${duration}`;
+    const tokens = note.pitches.map((pitch) => {
+      const slot = `${pitch.step}${pitch.octave}`;
+      const current = state.get(slot) ?? keyAlteration(key, pitch.step);
+      let accidental = "";
+      if (pitch.alteration !== current) {
+        accidental = pitch.alteration === 1 ? "#" : pitch.alteration === -1 ? "b" : "n";
+      }
+      state.set(slot, pitch.alteration);
+      return `${pitch.step}${accidental}${pitch.octave}`;
+    });
+    return tokens.length === 1 ? `${tokens[0]}/${duration}` : `(${tokens.join(" ")})/${duration}`;
+  });
 }

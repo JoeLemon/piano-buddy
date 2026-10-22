@@ -25,6 +25,8 @@ const props = defineProps<{
   metronomeOn?: boolean;
   metronomeBpm?: number;
   keyboardMode?: boolean;
+  /** 琴键是否标注电脑键位（独立的「按键标注」开关）。 */
+  keyLabels?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -34,6 +36,7 @@ const emit = defineEmits<{
   "toggle-metronome": [];
   "metronome-bpm": [bpm: number];
   "toggle-keyboard": [];
+  "toggle-key-labels": [];
   navigate: [id: string];
 }>();
 
@@ -47,6 +50,13 @@ function readBpm(event: Event): number {
 function closeSettings() {
   settingsOpen.value = false;
 }
+
+/** 分区页（如「我的」）复用同一个设置抽屉，不再复制一套设置 UI。 */
+function openSettings() {
+  settingsOpen.value = true;
+}
+
+defineExpose({ openSettings });
 
 function onKeydown(event: KeyboardEvent) {
   if (event.key === "Escape" && settingsOpen.value) closeSettings();
@@ -231,6 +241,17 @@ onBeforeUnmount(() => {
               {{ keyboardMode ? "模拟键盘 开" : "模拟键盘 关" }}
             </button>
             <button
+              v-if="keyboardMode"
+              type="button"
+              class="chip"
+              data-test="toggle-key-labels"
+              :aria-pressed="keyLabels ? 'true' : 'false'"
+              :class="{ 'chip-on': keyLabels }"
+              @click="emit('toggle-key-labels')"
+            >
+              {{ keyLabels ? "按键标注 开" : "按键标注 关" }}
+            </button>
+            <button
               v-if="!midiConnected"
               type="button"
               class="chip chip-action"
@@ -250,8 +271,9 @@ onBeforeUnmount(() => {
           </div>
 
           <p v-if="keyboardMode" class="keyboard-map" data-test="keyboard-hint">
-            黑键 S D G H J · 2 3 5 6 7<br />
-            白键 Z X C V B N M（C3–B3）· Q W E R T Y U I（C4–C5）
+            白键 A S D F G H J K L ; '（D 永远是 C）<br />
+            黑键 W R T · U I O（E Y P 是没有黑键的豁口）<br />
+            数字键 1–7 切换音区，D 键跟着换到别的 C
           </p>
 
           <details class="diag" data-test="midi-diag">

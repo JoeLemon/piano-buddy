@@ -102,15 +102,6 @@ const highlightMidi = computed(() => {
   return null;
 });
 
-// 传给键盘图：当前该用哪只手、哪根手指。没有目标音时不点亮任何一只（例如 L1-1 纯节奏课）。
-const activeHand = computed<Hand | null>(() => (highlightMidi.value == null ? null : hand.value));
-const activeFinger = computed<number | null>(() => {
-  const profile = profileState.value;
-  if (isFind(profile) && targetLabel.value) return fingerNumber(hand.value, targetLabel.value);
-  if (isLine(profile)) return sounding.value[noteIndex.value]?.finger ?? null;
-  return null;
-});
-
 function dismissTips() {
   showTips.value = false;
   if (profileState.value.seenReadingTips) return;
@@ -222,7 +213,9 @@ function presentLine(profile = profileState.value) {
 }
 
 function onNote(note: MidiNote) {
-  if (!props.midiConnected || note.kind !== "on") return;
+  // 屏幕琴键（鼠标 / 触摸点按）自己就是输入源，不需要先连 MIDI。
+  if (note.kind !== "on") return;
+  if (note.source !== "screen" && !props.midiConnected) return;
   const profile = profileState.value;
   if (profile.lessonId === "L1-1") onTap(note);
   else if (isFind(profile)) onFind(note);
@@ -320,15 +313,18 @@ function drawStaff() {
   applyPaint();
 }
 
-/** 给当前谱面上色（弹过/弹对/弹错），并把水平滚动条推进到当前待弹音。 */
+/** 给当前谱面上色（弹过/弹对/弹错/当前音），并把水平滚动条推进到当前待弹音。 */
 function applyPaint() {
   const el = staffEl.value;
   const current = score.value;
   if (!el || !current || !showsStaff.value) return;
+  // 当前待弹的音用金色标出来，弹过之后自然让位给绿/红判定色。
+  const active = sounding.value[noteIndex.value] ?? null;
   paintScoreProgress(el, current, hand.value, {
     playedCount: noteIndex.value,
     correctIds,
     wrongIds,
+    activeId: active?.id ?? null,
   });
   if (isLine(profileState.value)) scrollScoreToCursor(el, current, hand.value, noteIndex.value);
 }
@@ -458,7 +454,10 @@ function handFor(profile: Profile): Hand {
     <div v-if="showsStaff" ref="staffEl" class="staff"></div>
     <ScoreProgress v-if="showsStaff" :value="progress" />
     <div class="keyboard-panel">
-      <KeyboardDiagram :highlight-midi="highlightMidi" :active-hand="activeHand" :active-finger="activeFinger" :highlight-seq="noteIndex" />
+      <KeyboardDiagram
+        :highlight-midi="highlightMidi"
+        @note="onNote"
+      />
     </div>
   </div>
 </template>
@@ -547,13 +546,12 @@ function handFor(profile: Profile): Hand {
   scrollbar-width: thin;
 }
 
-/* 键盘区：深绿舞台底，让米白琴键浮在上面（规范 §4.5） */
+/* 键盘区：深绿舞台底，让米白琴键浮在上面（规范 §4.5）。
+   全尺寸键盘要横向滚动，所以面板占满内容宽度，不能再 fit-content。 */
 .keyboard-panel {
-  display: flex;
-  justify-content: center;
-  width: fit-content;
-  max-width: 100%;
-  margin: var(--pb-space-3) auto 0;
+  width: 100%;
+  box-sizing: border-box;
+  margin: var(--pb-space-3) 0 0;
   padding: var(--pb-space-2) var(--pb-space-3);
   border: 1px solid var(--pb-key-gap);
   border-radius: var(--pb-radius);

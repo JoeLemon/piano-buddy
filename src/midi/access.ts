@@ -11,10 +11,19 @@ export {
   bleDeviceName,
 } from "./ble";
 export {
-  MIDI_TO_KEY,
+  BLACK_ROW_CAPS,
+  WHITE_ROW_CAPS,
+  activeZone,
+  followMidi,
+  heldKeyMidis,
   keyCapFor,
+  keyCapsFor,
+  keyLabels,
   keyboardMode,
+  setActiveZone,
+  setKeyLabels,
   setKeyboardMode,
+  toggleKeyLabels,
   toggleKeyboardMode,
 } from "./keyboard";
 
@@ -58,9 +67,9 @@ export async function subscribeMidi(onNote: (note: MidiNote) => void): Promise<(
     const velocity = data.length > 2 ? data[2] : 0;
     const timeMs = performance.now();
     if (status === 0x90 && velocity > 0) {
-      onNote({ midi, timeMs, kind: "on" });
+      onNote({ midi, timeMs, kind: "on", source: "midi" });
     } else if (status === 0x80 || (status === 0x90 && velocity === 0)) {
-      onNote({ midi, timeMs, kind: "off" });
+      onNote({ midi, timeMs, kind: "off", source: "midi" });
     }
   };
 

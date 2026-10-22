@@ -4,7 +4,7 @@ import { audioAvailable, previewScore, startMetronome } from "../audio/preview";
 import { compare, type PlayedNote } from "../domain/compare";
 import { generateL1 } from "../domain/generate";
 import { generateL2 } from "../domain/generateL2";
-import { pitchToMidi } from "../domain/pitch";
+import { generateL3 } from "../domain/generateL3";
 import {
   canEnterSight,
   canEnterSightLevel,
@@ -13,10 +13,11 @@ import {
   testBpmForLevel,
   type Profile,
 } from "../domain/profile";
-import { flattenScore } from "../domain/timeline";
+import { scoreBeats } from "../domain/scoreBeats";
+import { scoreEvents } from "../domain/scoreEvents";
 import type { Hand, Score } from "../domain/types";
 import { DURATION_BEATS } from "../domain/vocabulary";
-import { subscribeMidi, type MidiNote } from "../midi/access";
+import { followMidi, subscribeMidi, type MidiNote } from "../midi/access";
 import {
   grandProgressRatio,
   measureForSounding,
@@ -38,9 +39,11 @@ const props = defineProps<{
   profile: Profile;
   midiConnected: boolean;
   forcedScore?: Score | null;
+  /** 曲库跟弹：同一段可以反复练，不消耗「一条最多 2 遍」的额度。 */
+  practiceMode?: boolean;
 }>();
 
-type SightTarget = { key: string; midi: number };
+type SightTarget = { keys: string[]; ids: string[]; midis: number[] };
 
 const emit = defineEmits<{
   "update-profile": [profile: Profile];
@@ -60,10 +63,16 @@ const phase = ref<"prepare" | "play" | "done">("prepare");
 const secondsLeft = ref(PREPARE_SECONDS);
 const preparing = ref(false);
 const showFingers = ref(true);
-/** L2 视奏是双手大谱表；其余都是单手。 */
+/** L2/L3 视奏是双手大谱表；其余都是单手。 */
 const grand = computed(() => score.value?.hands.length === 2);
-const level = computed<1 | 2>(() => (canEnterSightLevel(profileState.value, 2) ? 2 : 1));
-const bpm = ref(testBpmForLevel(props.profile, canEnterSightLevel(props.profile, 2) ? 2 : 1));
+const level = computed<1 | 2 | 3>(() =>
+  canEnterSightLevel(profileState.value, 3)
+    ? 3
+    : canEnterSightLevel(profileState.value, 2)
+      ? 2
+      : 1,
+);
+const bpm = ref(testBpmForLevel(props.profile, level.value));
 const staffEl = ref<HTMLElement | null>(null);
 const showTips = ref(!props.profile.seenSightTips);
 
@@ -83,6 +92,8 @@ let stopMidi: (() => void) | null = null;
 let midiToken = 0;
 let alive = true;
 const playCursor = ref(0);
+/** 当前要按的「拍」下标；与 playCursor（事件数）分开，因为一拍可能有两个事件。 */
+const targetIndex = ref(0);
 /** 「听一遍」跟随时的当前发声音序号；没有在预览时为 null。 */
 const previewIndex = ref<number | null>(null);
 /** 打开这条时还能练几遍（消耗式题库，最多 2 遍）。 */
@@ -92,6 +103,8 @@ let playBpm = bpm.value;
 let played: PlayedNote[] = [];
 const wrongIds = new Set<string>();
 const correctIds = new Set<string>();
+/** 和弦：先攒够这一组要按的键，再整组判定。 */
+let chordBuffer: number[] = [];
 const noIds: ReadonlySet<string> = new Set<string>();
 
 const paintIndex = computed(() =>
@@ -133,6 +146,17 @@ const preparePercent = computed(() =>
 
 watch([score, staffEl, hand, showFingers], drawStaff, { flush: "post" });
 watch(() => props.midiConnected, syncPrepare);
+
+// 视奏页不显示琴键图，但电脑键盘用的是「当前音区」映射：不跟着走的话，
+// 左手练习里按 D 会弹出 C4 而不是 C3。
+watch(
+  [score, hand],
+  () => {
+    const first = targets.value[0];
+    if (first) followMidi(first.midis[0]);
+  },
+  { immediate: true },
+);
 
 onMounted(() => {
   openLine();
@@ -180,8 +204,11 @@ function openLine() {
   }
 }
 
-/** L2 通过后默认双手大谱表；否则还是单手 L1 视奏。 */
+/** L2 通过后默认双手大谱表，L3 通过后加入和弦与临时升降；否则还是单手 L1 视奏。 */
 function nextLine(seed: number): Score {
+  if (level.value === 3) {
+    return generateL3({ seed, mode: "sight", shape: { kind: "sight" } });
+  }
   if (level.value === 2) {
     return generateL2({ seed, mode: "sight", shape: { kind: "sight" } });
   }
@@ -190,7 +217,7 @@ function nextLine(seed: number): Score {
 
 /** 换手位/换难度时回到该档默认速度；同一档内保留玩家自己调的速度。 */
 function applyDefaultBpm(next: Score) {
-  const nextLevel: 1 | 2 = next.level === 2 ? 2 : 1;
+  const nextLevel: 1 | 2 | 3 = next.level === 3 ? 3 : next.level === 2 ? 2 : 1;
   if (score.value && score.value.level === next.level) return;
   bpm.value = testBpmForLevel(profileState.value, nextLevel);
 }
@@ -207,8 +234,10 @@ function syncRemainingPlays() {
 
 function resetProgress() {
   playCursor.value = 0;
+  targetIndex.value = 0;
   previewIndex.value = null;
   played = [];
+  chordBuffer = [];
   wrongIds.clear();
   correctIds.clear();
   const el = staffEl.value;
@@ -252,25 +281,27 @@ function beginPlay() {
   preview?.stop();
   preview = null;
   previewIndex.value = null;
-  const registration = registerSightUse(profileState.value, score.value.id);
-  if (!registration.allowed) {
-    let next = { ...registration.profile, lastSeed: profileState.value.lastSeed + 1 };
+  if (!props.practiceMode) {
+    const registration = registerSightUse(profileState.value, score.value.id);
+    if (!registration.allowed) {
+      let next = { ...registration.profile, lastSeed: profileState.value.lastSeed + 1 };
+      next = pruneExhaustedErrorSnippet(next, score.value.id);
+      profileState.value = next;
+      emit("update-profile", profileState.value);
+      if (props.forcedScore) {
+        phase.value = "done";
+        return;
+      }
+      openLine();
+      phase.value = "prepare";
+      syncPrepare();
+      return;
+    }
+    let next = registration.profile;
     next = pruneExhaustedErrorSnippet(next, score.value.id);
     profileState.value = next;
     emit("update-profile", profileState.value);
-    if (props.forcedScore) {
-      phase.value = "done";
-      return;
-    }
-    openLine();
-    phase.value = "prepare";
-    syncPrepare();
-    return;
   }
-  let next = registration.profile;
-  next = pruneExhaustedErrorSnippet(next, score.value.id);
-  profileState.value = next;
-  emit("update-profile", profileState.value);
   phase.value = "play";
   resetProgress();
   playStartedAt = performance.now();
@@ -287,13 +318,15 @@ function finishPlay() {
   playTimer = null;
   metronome?.stop();
   metronome = null;
-  targets.value.forEach((target, index) => {
-    const hit = played[index];
-    if (!hit || hit.midi !== target.midi) wrongIds.add(target.key);
-  });
-  paintProgress();
+  chordBuffer = [];
   const handValue: Hand | "BOTH" = grand.value ? "BOTH" : hand.value;
   const result = compare(score.value, handValue, played, playBpm);
+  const wrong = new Set(result.wrongPitchNoteIds);
+  targets.value.forEach((target) => {
+    const bad = target.ids.some((id) => wrong.has(id));
+    target.keys.forEach((key) => (bad ? wrongIds : correctIds).add(key));
+  });
+  paintProgress();
   let next = pruneExhaustedErrorSnippet(profileState.value, score.value.id);
   if (next !== profileState.value) {
     profileState.value = next;
@@ -310,12 +343,31 @@ function finishPlay() {
 
 function onNote(note: MidiNote) {
   if (!props.midiConnected || note.kind !== "on" || phase.value !== "play" || !score.value) return;
-  const target = targets.value[playCursor.value];
+  const target = targets.value[targetIndex.value];
   if (!target) return;
   played.push({ midi: note.midi, timeMs: note.timeMs - playStartedAt });
-  if (note.midi !== target.midi) wrongIds.add(target.key);
-  else correctIds.add(target.key);
-  playCursor.value += 1;
+  if (target.midis.length === 1) {
+    const key = target.keys[0];
+    if (note.midi === target.midis[0]) correctIds.add(key);
+    else wrongIds.add(key);
+    playCursor.value += target.keys.length;
+    targetIndex.value += 1;
+    paintProgress();
+    scrollToCursor();
+    return;
+  }
+
+  chordBuffer.push(note.midi);
+  if (chordBuffer.length < target.midis.length) {
+    paintProgress();
+    return;
+  }
+  const pressed = new Set(chordBuffer);
+  const ok = pressed.size === target.midis.length && target.midis.every((midi) => pressed.has(midi));
+  target.keys.forEach((key) => (ok ? correctIds : wrongIds).add(key));
+  chordBuffer = [];
+  playCursor.value += target.keys.length;
+  targetIndex.value += 1;
   paintProgress();
   scrollToCursor();
 }
@@ -330,17 +382,27 @@ function paintProgress() {
       timelineCount: previewing ? previewIndex.value! + 1 : playCursor.value,
       correctKeys: previewing ? noIds : correctIds,
       wrongKeys: previewing ? noIds : wrongIds,
-      activeKey: previewing ? targets.value[previewIndex.value!]?.key ?? null : null,
+      activeKey: previewing ? targetAtEvent(previewIndex.value!)?.keys[0] ?? null : null,
     });
     return;
   }
-  const activeId = previewing ? targets.value[previewIndex.value!]?.key ?? null : null;
+  const activeId = previewing ? targetAtEvent(previewIndex.value!)?.keys[0] ?? null : null;
   paintScoreProgress(el, current, hand.value, {
     playedCount: previewing ? previewIndex.value! + 1 : playCursor.value,
     correctIds: previewing ? noIds : correctIds,
     wrongIds: previewing ? noIds : wrongIds,
     activeId,
   });
+}
+
+/** 预览按事件序号推进；把事件序号换算回它所属的那一拍。 */
+function targetAtEvent(index: number): SightTarget | null {
+  let cursor = 0;
+  for (const target of targets.value) {
+    cursor += target.keys.length;
+    if (index < cursor) return target;
+  }
+  return null;
 }
 
 function scrollToCursor() {
@@ -452,22 +514,22 @@ function cleanupAudio() {
 }
 
 function targetsFor(current: Score): SightTarget[] {
-  if (current.hands.length === 2) {
-    return flattenScore(current).map((note) => ({ key: `${note.hand}:${note.id}`, midi: note.midi }));
+  const both = current.hands.length === 2;
+  const events = scoreEvents(current, both ? "BOTH" : hand.value);
+  const keyFor = (eventHand: string, id: string) => (both ? `${eventHand}:${id}` : id);
+  // 没有和弦时保持逐音目标（L2 双手同拍仍是一个音一个音按键）。
+  if (!events.some((event) => event.midis.length > 1)) {
+    return events.map((event) => ({
+      keys: [keyFor(event.hand, event.id)],
+      ids: [event.id],
+      midis: event.midis,
+    }));
   }
-  return soundingEvents(current, hand.value);
-}
-
-function soundingEvents(current: Score, nextHand: Hand): SightTarget[] {
-  const events: SightTarget[] = [];
-  for (const measure of current.staves[nextHand]?.measures ?? []) {
-    for (const note of measure.notes) {
-      if (note.duration.endsWith("r") || note.pitches.length === 0) continue;
-      const pitch = note.pitches[0];
-      events.push({ key: note.id, midi: pitchToMidi(pitch) });
-    }
-  }
-  return events;
+  return scoreBeats(events).map((beat) => ({
+    keys: beat.events.map((event) => keyFor(event.hand, event.id)),
+    ids: beat.ids,
+    midis: beat.midis,
+  }));
 }
 
 function lineMs(current: Score, tempo: number): number {
@@ -506,7 +568,7 @@ function lineMs(current: Score, tempo: number): number {
     <header class="sight-head">
       <div class="head-text">
         <p v-if="phase === 'prepare' && score" class="remaining" data-test="sight-remaining">
-          这条还能练 {{ remainingPlays }} 遍
+          {{ practiceMode ? "跟弹本段，可反复练" : `这条还能练 ${remainingPlays} 遍` }}
         </p>
         <p v-else class="remaining">{{ phase === "prepare" ? "" : "别停下，弹错也继续往下读。" }}</p>
       </div>

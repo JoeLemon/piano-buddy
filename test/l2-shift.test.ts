@@ -86,9 +86,6 @@ describe("L2-6 five-finger shift", () => {
 
     expect(wrapper.text()).toContain("整段从 C 位挪到 D 位");
     expect(wrapper.get("[data-test=lesson-goal]").text()).toBe("短句 0/2");
-    // 起手在 C 位。
-    const rhHand = () => wrapper.find(".hand[data-hand='RH']").attributes("style");
-    expect(rhHand()).toContain("--hand-start: 7");
 
     const line = shiftLine(2, "RH");
     const notes = flattenScore(line);
@@ -101,10 +98,11 @@ describe("L2-6 five-finger shift", () => {
     play(input, notes.slice(0, shiftAt).map((note) => note.midi));
     await flushPromises();
 
-    // 挪位那一下，琴键图的手也跟着从 C 位挪到 D 位。
+    // 挪位那一下之后，琴键图的目标键跟着推进到下一个音。
     input.dispatchEvent(noteOn(notes[shiftAt]!.midi));
     await flushPromises();
-    expect(rhHand()).toContain("--hand-start: 8");
+    const target = wrapper.findAll(".white-key, .black-key").find((key) => key.classes().includes("is-target"));
+    expect(target?.attributes("data-midi")).toBe(String(notes[shiftAt + 1]!.midi));
 
     play(input, notes.slice(shiftAt + 1).map((note) => note.midi));
     await flushPromises();

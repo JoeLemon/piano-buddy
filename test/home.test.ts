@@ -86,18 +86,6 @@ describe("HomeView", () => {
     expect(wrapper.text()).not.toContain("%");
   });
 
-  it("opens the theory practice hub without requiring a MIDI unlock", async () => {
-    const wrapper = mount(HomeView, {
-      props: {
-        profile: profile(),
-        rightUnlocked: false,
-        leftUnlocked: false,
-      },
-    });
-    await wrapper.get("[data-test=practice]").trigger("click");
-    expect(wrapper.emitted("open-practice")).toBeTruthy();
-  });
-
   it("shows the error book when unlocked and snippets exist", async () => {
     const wrapper = mount(HomeView, {
       props: {
@@ -146,6 +134,38 @@ describe("HomeView", () => {
     expect(wrapper.get('[data-stage=L1]').attributes("data-state")).toBe("done");
     expect(wrapper.get('[data-stage=L2]').attributes("data-state")).toBe("current");
     expect(wrapper.get("[data-test=learning-path]").text()).toContain("正在学");
+  });
+
+  it("shows today's completion, duration and streak", () => {
+    const now = Date.now();
+    const wrapper = mount(HomeView, {
+      props: {
+        profile: profile({
+          practiceLog: [
+            { at: now, kind: "reading", ms: 20 * 60 * 1000 },
+            { at: now, kind: "sight", ms: 5 * 60 * 1000 },
+          ],
+        }),
+        rightUnlocked: true,
+        leftUnlocked: true,
+      },
+    });
+    expect(wrapper.get("[data-test=today-status]").attributes("data-done")).toBe("true");
+    expect(wrapper.get("[data-test=today-status]").text()).toContain("今天已练过");
+    expect(wrapper.get("[data-test=today-count]").text()).toBe("2 条 · 25 分钟");
+    expect(wrapper.get("[data-test=today-streak]").text()).toContain("连续 1 天");
+  });
+
+  it("says the day has not started when there is no practice log", () => {
+    const wrapper = mount(HomeView, {
+      props: {
+        profile: profile(),
+        rightUnlocked: false,
+        leftUnlocked: false,
+      },
+    });
+    expect(wrapper.get("[data-test=today-status]").attributes("data-done")).toBe("false");
+    expect(wrapper.get("[data-test=today-status]").text()).toContain("今天还没开始");
   });
 });
 

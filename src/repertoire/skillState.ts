@@ -170,6 +170,11 @@ export const LESSON_SKILL_MAP: Record<LessonId, readonly LessonSkill[]> = {
   "L2-5": [{ skillId: "key.one-sharp" }, { skillId: "pos.five" }],
   "L2-6": [{ skillId: "pos.shift" }],
   "L2-test": LEVEL_SKILLS[2].map((skillId) => ({ skillId })),
+  "L3R-1": [{ skillId: "chord.interval" }],
+  "L3R-2": [{ skillId: "chord.triad", hand: "RH" }],
+  "L3R-3": [{ skillId: "chord.triad", hand: "LH" }],
+  "L3R-4": [{ skillId: "key.accidental" }],
+  "L3R-test": LEVEL_SKILLS[3].map((skillId) => ({ skillId })),
 };
 
 export function applyLessonCompletion(

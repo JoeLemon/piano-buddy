@@ -78,8 +78,9 @@
   --pb-score-canvas: #ffffff;
   --pb-score-ink: #1a1a1a;
 
-  /* 乐谱进度配色（暖白卡内列） */
-  --pb-score-played: #efe9dc;
+  /* 乐谱进度配色（暖白卡内列）
+     played 需要比卡底更沉一档，否则「已弹过」在白色谱面上看不出来 */
+  --pb-score-played: #cbc1ac;
   --pb-score-correct: #a9bfa0;
   --pb-score-wrong: #b96a55;
   --pb-score-active: #c9a45c;

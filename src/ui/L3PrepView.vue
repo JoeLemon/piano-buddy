@@ -14,6 +14,8 @@ const props = defineProps<{
   profile: Profile;
   /** 测试可传固定 seed；真实页面每次进入用随机 seed。 */
   seed?: number;
+  /** 从曲库缺技能直达时，直接打开这一节。 */
+  initialLessonId?: string;
 }>();
 
 const emit = defineEmits<{
@@ -22,8 +24,11 @@ const emit = defineEmits<{
 
 const baseSeed = props.seed ?? Math.floor(Math.random() * 0xffffffff);
 const firstIncomplete =
-  L3_PREP_LESSONS.find((lesson) => !props.profile.l3PrepCompleted?.includes(lesson.id)) ??
-  L3_PREP_LESSONS[0];
+  (props.initialLessonId
+    ? L3_PREP_LESSONS.find((lesson) => lesson.id === props.initialLessonId)
+    : undefined)
+  ?? L3_PREP_LESSONS.find((lesson) => !props.profile.l3PrepCompleted?.includes(lesson.id))
+  ?? L3_PREP_LESSONS[0];
 
 const selectedId = ref(firstIncomplete.id);
 const session = ref(0);

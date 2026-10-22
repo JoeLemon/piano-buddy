@@ -3,6 +3,8 @@ import type { Hand, Level } from "./types";
 
 const PASS_TEXT = "这些音可以直接认了。接下来的视奏里只会用到它们。";
 const RHYTHM_TEXT = "有两处比拍子晚了超过两拍。先把速度放慢，再来一条新的。";
+const L3_PASS_TEXT = "和弦和临时记号都看下来了。现在可以去曲库挑一首带和弦的曲子。";
+const L3_FAIL_TEXT = "这几组和弦还没按齐。先只按根音，或把手位摆好再整组落下。";
 
 const SIGHT_PASS_TEXT = "完成啦！这条读下来了。可以再看一条新的，或者回首页歇一下。";
 const SIGHT_RHYTHM_TEXT = "完成啦！大部分音都读对了，这几处比拍子晚了，可以降低速度再试一次。";
@@ -23,13 +25,14 @@ const PITCH_TEXT: Record<string, string> = {
 
 export function feedbackText(result: CompareResult, level: Level, hand: Hand): string {
   void hand;
-  if (isPass(result, level)) return PASS_TEXT;
+  if (isPass(result, level)) return level === 3 ? L3_PASS_TEXT : PASS_TEXT;
   if (result.rhythmBreaks >= 2) return RHYTHM_TEXT;
   if (result.firstWrongLabel) {
+    if (level === 3) return `「${result.firstWrongLabel}」这一组没按齐。再来一条，先把每组的最低音找准。`;
     const sentence = PITCH_TEXT[result.firstWrongLabel];
     if (sentence) return sentence;
   }
-  return RHYTHM_TEXT;
+  return level === 3 ? L3_FAIL_TEXT : RHYTHM_TEXT;
 }
 
 /** Sight-reading review copy. Rhythm issues come before pitch. No percentages. */

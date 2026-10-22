@@ -16,6 +16,8 @@ const props = defineProps<{
   wrongPitchNoteIds: string[];
   lateNoteIds: string[];
   hasErrorBook: boolean;
+  /** 复盘后的主按钮文案：曲库跟弹是「回到曲库」，视奏是「再看一条新的」。 */
+  nextLabel?: string;
 }>();
 
 const emit = defineEmits<{
@@ -78,7 +80,7 @@ function draw() {
     <div ref="staffEl" class="staff" data-test="review-staff"></div>
     <div class="actions">
       <button type="button" class="primary" data-test="next-line" @click="emit('next')">
-        再看一条新的
+        {{ nextLabel ?? "再看一条新的" }}
       </button>
       <button
         v-if="hasErrorBook"

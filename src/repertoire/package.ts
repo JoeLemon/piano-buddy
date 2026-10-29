@@ -55,15 +55,48 @@ export interface PackageManifest {
 export interface ValidationResult {
   ok: boolean;
   errors: string[];
+  /** 不阻止加载、但值得作者注意的问题（未知字段、授权过期、无法校验 checksum…）。 */
+  warnings: string[];
   manifest?: PackageManifest;
+}
+
+export interface ValidateOptions {
+  /** 判断授权是否到期的「现在」；默认取当前时间，测试可注入固定值。 */
+  now?: Date;
 }
 
 const PACKAGE_TYPES: readonly PackageType[] = ["course", "song", "practice"];
 const RIGHTS_TYPES: readonly RightsType[] = ["public-domain", "licensed", "original", "user-imported"];
 const MAX_ASSETS = 64;
 const MAX_ASSET_PATH = 200;
+/** 单个资源文本上限（UTF-8 字节）。 */
+export const MAX_ASSET_BYTES = 512 * 1024;
+/** 包内所有资源合计上限（UTF-8 字节）。 */
+export const MAX_TOTAL_BYTES = 4 * 1024 * 1024;
 const ID_PATTERN = /^[a-z0-9][a-z0-9._-]*$/;
 const SEMVER_PATTERN = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/;
+
+/** manifest 已知字段；出现未知字段时给警告，帮作者发现拼写错误。 */
+const KNOWN_MANIFEST_KEYS = new Set<string>([
+  "schemaVersion",
+  "id",
+  "name",
+  "type",
+  "version",
+  "songId",
+  "arrangementId",
+  "songTitle",
+  "composer",
+  "minAppVersion",
+  "skillDeps",
+  "difficulty",
+  "assets",
+  "checksum",
+  "license",
+  "rights",
+]);
+const KNOWN_DIFFICULTY_KEYS = new Set<string>(["level", "bpm", "repeat", "len"]);
+const KNOWN_RIGHTS_KEYS = new Set<string>(["type", "attribution", "territory", "expiresAt"]);
 
 /**
  * 数据包是未信任输入：assets 必须是包内相对 POSIX 路径。
@@ -82,12 +115,20 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
 }
 
 /** 校验并规范化一个未知的 manifest 原始值（防御坏输入）。 */
-export function validateManifest(raw: unknown, knownSkillIds: Iterable<string>): ValidationResult {
+export function validateManifest(
+  raw: unknown,
+  knownSkillIds: Iterable<string>,
+  options: ValidateOptions = {},
+): ValidationResult {
   const errors: string[] = [];
+  const warnings: string[] = [];
   if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
-    return { ok: false, errors: ["manifest 必须是 JSON 对象"] };
+    return { ok: false, errors: ["manifest 必须是 JSON 对象"], warnings };
   }
   const m = raw as Record<string, unknown>;
+  for (const key of Object.keys(m)) {
+    if (!KNOWN_MANIFEST_KEYS.has(key)) warnings.push(`未知字段已忽略：${key}`);
+  }
   const known = new Set(knownSkillIds);
   const str = (key: string): string | null =>
     typeof m[key] === "string" && (m[key] as string).length > 0 ? (m[key] as string) : null;
@@ -173,6 +214,9 @@ export function validateManifest(raw: unknown, knownSkillIds: Iterable<string>):
     if (typeof d !== "object" || d === null || Array.isArray(d)) {
       errors.push("difficulty 必须是对象");
     } else {
+      for (const key of Object.keys(d)) {
+        if (!KNOWN_DIFFICULTY_KEYS.has(key)) warnings.push(`未知字段已忽略：difficulty.${key}`);
+      }
       if (typeof d.level !== "number") errors.push("difficulty.level 必须是数字");
       else if (!Number.isInteger(d.level) || d.level < 1 || d.level > 7) {
         errors.push("difficulty.level 必须是 1..7 的整数（7 = 超纲）");
@@ -219,6 +263,9 @@ export function validateManifest(raw: unknown, knownSkillIds: Iterable<string>):
       errors.push("rights 必须是对象");
     } else {
       const r = m.rights;
+      for (const key of Object.keys(r)) {
+        if (!KNOWN_RIGHTS_KEYS.has(key)) warnings.push(`未知字段已忽略：rights.${key}`);
+      }
       const typeValue = typeof r.type === "string" ? r.type : "";
       if (!RIGHTS_TYPES.includes(typeValue as RightsType)) {
         errors.push("rights.type 必须是 public-domain | licensed | original | user-imported");
@@ -229,8 +276,17 @@ export function validateManifest(raw: unknown, knownSkillIds: Iterable<string>):
       if (r.territory !== undefined && typeof r.territory !== "string") {
         errors.push("rights.territory 必须是字符串");
       }
-      if (r.expiresAt !== undefined && typeof r.expiresAt !== "string") {
-        errors.push("rights.expiresAt 必须是 ISO 日期字符串");
+      if (r.expiresAt !== undefined) {
+        if (typeof r.expiresAt !== "string") {
+          errors.push("rights.expiresAt 必须是 ISO 日期字符串");
+        } else {
+          const expiresMs = Date.parse(r.expiresAt);
+          if (Number.isNaN(expiresMs)) {
+            errors.push("rights.expiresAt 不是合法日期");
+          } else if (expiresMs < (options.now ?? new Date()).getTime()) {
+            warnings.push(`授权已过期（expiresAt = ${r.expiresAt}），应下架`);
+          }
+        }
       }
       rights = {
         type: typeValue as RightsType,
@@ -241,11 +297,12 @@ export function validateManifest(raw: unknown, knownSkillIds: Iterable<string>):
     }
   }
 
-  if (errors.length > 0) return { ok: false, errors };
+  if (errors.length > 0) return { ok: false, errors, warnings };
 
   return {
     ok: true,
     errors: [],
+    warnings,
     manifest: {
       schemaVersion: 1,
       id: id!,
@@ -268,14 +325,18 @@ export function validateManifest(raw: unknown, knownSkillIds: Iterable<string>):
 }
 
 /** 解析 manifest 文本并校验。 */
-export function parseManifest(jsonText: string, knownSkillIds: Iterable<string>): ValidationResult {
+export function parseManifest(
+  jsonText: string,
+  knownSkillIds: Iterable<string>,
+  options: ValidateOptions = {},
+): ValidationResult {
   let raw: unknown;
   try {
     raw = JSON.parse(jsonText);
   } catch (e) {
-    return { ok: false, errors: [`JSON 解析失败：${(e as Error).message}`] };
+    return { ok: false, errors: [`JSON 解析失败：${(e as Error).message}`], warnings: [] };
   }
-  return validateManifest(raw, knownSkillIds);
+  return validateManifest(raw, knownSkillIds, options);
 }
 
 /** 数据包的文件读取抽象（本地目录 / zip / fetch 均可实现）。 */
@@ -300,37 +361,101 @@ export function memorySource(files: Record<string, string>): PackageSource {
 
 export interface LoadedPackage {
   manifest: PackageManifest;
-  /** 已读取的资源文本（P0 只读文本内容；checksum 校验留待接入真实 IO 时补） */
+  /** 已读取的资源文本（按 manifest.assets 顺序）；checksum 已在 loadPackage 内比对。 */
   files: Record<string, string>;
 }
 
-export type LoadResult = { ok: true; pkg: LoadedPackage } | { ok: false; errors: string[] };
+export type LoadResult =
+  | { ok: true; pkg: LoadedPackage; warnings: string[] }
+  | { ok: false; errors: string[]; warnings: string[] };
 
-/** 从数据源加载一个包：读 manifest.json → 校验 → 读取声明的资源。 */
+/** UTF-8 字节数（TextEncoder 在浏览器与 Node 18+ 都是全局的）。 */
+function byteLength(text: string): number {
+  return new TextEncoder().encode(text).length;
+}
+
+const HASH_ALGORITHMS: Record<string, string> = { sha256: "SHA-256", sha512: "SHA-512" };
+
+/**
+ * checksum 覆盖范围：按 `assets` 声明顺序拼接「路径\n内容」，资源之间用 \n 分隔。
+ * 路径参与拼接，改名或改顺序都会让摘要变化。
+ */
+export function checksumPayload(
+  assets: readonly string[],
+  files: Record<string, string>,
+): string {
+  return assets.map((asset) => `${asset}\n${files[asset] ?? ""}`).join("\n");
+}
+
+/** 用 Web Crypto 算摘要；环境不支持时返回 null（调用方降级为警告）。 */
+async function digestHex(algorithm: string, text: string): Promise<string | null> {
+  const subtle = globalThis.crypto?.subtle;
+  if (!subtle) return null;
+  const buffer = await subtle.digest(algorithm, new TextEncoder().encode(text));
+  return [...new Uint8Array(buffer)].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+/** 从数据源加载一个包：读 manifest.json → 校验 → 读取声明的资源 → 比对 checksum。 */
 export async function loadPackage(
   source: PackageSource,
   knownSkillIds: Iterable<string>,
+  options: ValidateOptions = {},
 ): Promise<LoadResult> {
   let manifestText: string;
   try {
     manifestText = await source.readText("manifest.json");
   } catch (e) {
-    return { ok: false, errors: [`读取 manifest.json 失败：${(e as Error).message}`] };
+    return { ok: false, errors: [`读取 manifest.json 失败：${(e as Error).message}`], warnings: [] };
   }
 
-  const vr = parseManifest(manifestText, knownSkillIds);
-  if (!vr.ok || !vr.manifest) return { ok: false, errors: vr.errors };
+  const vr = parseManifest(manifestText, knownSkillIds, options);
+  if (!vr.ok || !vr.manifest) return { ok: false, errors: vr.errors, warnings: vr.warnings };
 
+  const manifest = vr.manifest;
   const files: Record<string, string> = {};
   const errors: string[] = [];
-  for (const asset of vr.manifest.assets) {
+  const warnings = [...vr.warnings];
+  let totalBytes = 0;
+  for (const asset of manifest.assets) {
+    let text: string;
     try {
-      files[asset] = await source.readText(asset);
+      text = await source.readText(asset);
     } catch (e) {
       errors.push(`读取资源失败：${asset}（${(e as Error).message}）`);
+      continue;
+    }
+    const bytes = byteLength(text);
+    if (bytes > MAX_ASSET_BYTES) {
+      errors.push(`资源超出单文件上限：${asset}（${bytes} > ${MAX_ASSET_BYTES} 字节）`);
+      continue;
+    }
+    totalBytes += bytes;
+    if (totalBytes > MAX_TOTAL_BYTES) {
+      errors.push(`资源合计超出上限（> ${MAX_TOTAL_BYTES} 字节）`);
+      break;
+    }
+    files[asset] = text;
+  }
+  if (errors.length > 0) return { ok: false, errors, warnings };
+
+  // checksum：声明了就按约定覆盖范围重算并比对，防止内容被替换。
+  if (manifest.checksum) {
+    const separator = manifest.checksum.indexOf(":");
+    const scheme = manifest.checksum.slice(0, separator);
+    const expected = manifest.checksum.slice(separator + 1);
+    const algorithm = HASH_ALGORITHMS[scheme];
+    if (!algorithm) {
+      errors.push(`未知的 checksum 算法：${scheme}`);
+    } else {
+      const actual = await digestHex(algorithm, checksumPayload(manifest.assets, files));
+      if (actual === null) {
+        warnings.push("无法校验 checksum（当前环境没有 Web Crypto），已跳过");
+      } else if (actual.toLowerCase() !== expected.toLowerCase()) {
+        errors.push(`checksum 不匹配（期望 ${expected}，实际 ${actual}）`);
+      }
     }
   }
-  if (errors.length > 0) return { ok: false, errors };
+  if (errors.length > 0) return { ok: false, errors, warnings };
 
-  return { ok: true, pkg: { manifest: vr.manifest, files } };
+  return { ok: true, pkg: { manifest, files }, warnings };
 }

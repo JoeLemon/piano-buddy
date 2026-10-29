@@ -2,6 +2,39 @@
   "version": 1,
   "songs": [
     {
+      "songId": "song.morning-song",
+      "title": "晨歌",
+      "composer": "Piano Buddy",
+      "arrangements": [
+        {
+          "arrangementId": "arr.morning-song.flow",
+          "packageId": "pkg.morning-song.full",
+          "name": "晨歌 · L5 编配",
+          "level": 5,
+          "label": "L5",
+          "bpm": 60,
+          "measures": 8,
+          "skillDeps": [
+            "chord.progression",
+            "chord.triad",
+            "clef.bass",
+            "clef.treble",
+            "hands.both",
+            "hands.together",
+            "key.c",
+            "pos.expand",
+            "pos.five",
+            "pos.shift",
+            "rhythm.dotted"
+          ],
+          "rights": {
+            "type": "original",
+            "attribution": "Piano Buddy 教学编配（原创，含弱起小节与跨小节延音）"
+          }
+        }
+      ]
+    },
+    {
       "songId": "song.ode-to-joy",
       "title": "欢乐颂",
       "composer": "Ludwig van Beethoven",

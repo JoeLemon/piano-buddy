@@ -43,6 +43,12 @@ function noteOn(midi: number) {
   return event;
 }
 
+function noteOff(midi: number) {
+  const event = new Event("midimessage");
+  Object.assign(event, { data: Uint8Array.from([0x80, midi, 0]) });
+  return event;
+}
+
 function sounding(score: Score, hand: Hand): { id: string; midi: number; label: string }[] {
   const notes: { id: string; midi: number; label: string }[] = [];
   for (const measure of score.staves[hand]?.measures ?? []) {
@@ -61,6 +67,16 @@ function lineMs(score: Score, hand: Hand, bpm: number): number {
     0,
   );
   return Math.round(beats * (60000 / bpm));
+}
+
+/** 某个音的时值（拍）；找不到按一拍算。 */
+function noteBeats(score: Score, id: string): number {
+  for (const measure of score.staves.RH?.measures ?? []) {
+    for (const note of measure.notes) {
+      if (note.id === id) return DURATION_BEATS[note.duration];
+    }
+  }
+  return 1;
 }
 
 /** 最小可用的 AudioContext：只让 audioAvailable()/previewScore 跑起来。 */
@@ -243,6 +259,61 @@ describe("SightView", () => {
     expect(wrapper.emitted("finished")).toHaveLength(1);
   });
 
+  it("records how long each note was held and reports too-short holds", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "setInterval", "clearTimeout", "clearInterval"] });
+    const input = new FakeInput();
+    installAccess([input]);
+    vi.spyOn(audio, "startMetronome").mockReturnValue({ stop() {} });
+    const profile = sightProfile({ lastSeed: 1 });
+    const score = generateL1({ hand: "RH", seed: 1, mode: "sight" });
+    const notes = sounding(score, "RH");
+    // 时钟自己拨：抬手早晚就是判定依据，不能依赖真实时间。
+    let now = 0;
+    vi.spyOn(performance, "now").mockImplementation(() => now);
+
+    const wrapper = mount(SightView, { props: { profile, midiConnected: true } });
+    await vi.advanceTimersByTimeAsync(25000);
+    for (const note of notes) {
+      input.dispatchEvent(noteOn(note.midi));
+      now += 100; // 每个音只按 100ms（0.1 拍）就抬，远低于六成
+      input.dispatchEvent(noteOff(note.midi));
+    }
+    await vi.advanceTimersByTimeAsync(lineMs(score, "RH", 60));
+
+    const finished = wrapper.emitted("finished")?.[0]?.[0] as {
+      result: { pitchErrors: number; shortNoteIds: string[] };
+    };
+    expect(finished.result.pitchErrors).toBe(0);
+    expect(finished.result.shortNoteIds).toHaveLength(notes.length);
+  });
+
+  it("says nothing about length when every note is held long enough", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "setInterval", "clearTimeout", "clearInterval"] });
+    const input = new FakeInput();
+    installAccess([input]);
+    vi.spyOn(audio, "startMetronome").mockReturnValue({ stop() {} });
+    const profile = sightProfile({ lastSeed: 1 });
+    const score = generateL1({ hand: "RH", seed: 1, mode: "sight" });
+    const notes = sounding(score, "RH");
+    let now = 0;
+    vi.spyOn(performance, "now").mockImplementation(() => now);
+
+    const wrapper = mount(SightView, { props: { profile, midiConnected: true } });
+    await vi.advanceTimersByTimeAsync(25000);
+    for (const note of notes) {
+      input.dispatchEvent(noteOn(note.midi));
+      now += Math.round(noteBeats(score, note.id) * 1000 * 0.9); // 各自时值的九成
+      input.dispatchEvent(noteOff(note.midi));
+    }
+    await vi.advanceTimersByTimeAsync(lineMs(score, "RH", 60));
+
+    const finished = wrapper.emitted("finished")?.[0]?.[0] as {
+      result: { pitchErrors: number; shortNoteIds: string[] };
+    };
+    expect(finished.result.pitchErrors).toBe(0);
+    expect(finished.result.shortNoteIds).toEqual([]);
+  });
+
   it("shows the countdown bar, measure ticks, and how many tries are left", async () => {
     const profile = sightProfile({ lastSeed: 3, sightUses: { "l1-RH-3": 1 } });
     const wrapper = mount(SightView, { props: { profile, midiConnected: true } });
@@ -317,10 +388,32 @@ describe("ReviewView", () => {
     expect(wrapper.find("[data-test=keyboard]").exists()).toBe(false);
     expect(wrapper.find("[data-test=rewind]").exists()).toBe(false);
     expect(wrapper.text()).not.toContain("%");
+    // 没有按得太短的音时，这一行不出现
+    expect(wrapper.find("[data-test=review-length]").exists()).toBe(false);
     await flushPromises();
     expect(wrapper.find("[data-wrong]").exists()).toBe(true);
     await wrapper.get("[data-test=next-line]").trigger("click");
     expect(wrapper.emitted("next")).toHaveLength(1);
+  });
+
+  it("points out too-short holds without counting them as errors", () => {
+    const score = generateL1({ hand: "RH", seed: 2, mode: "sight" });
+    const wrapper = mount(ReviewView, {
+      props: {
+        feedback: "完成啦！这条读下来了。可以再看一条新的，或者回首页歇一下。",
+        score,
+        hand: "RH",
+        wrongPitchNoteIds: [],
+        lateNoteIds: [],
+        shortNoteIds: ["1-0", "1-2"],
+        hasErrorBook: false,
+      },
+    });
+    expect(wrapper.get("[data-test=review-length]").text()).toBe("2 个音按得太短，长音符要按住不放。");
+    // 只观察：统计行里不多一项，图例也不多一种颜色
+    const summary = wrapper.get("[data-test=review-summary]").text();
+    expect(summary).not.toContain("按得太短");
+    expect(wrapper.findAll(".legend .swatch")).toHaveLength(2);
   });
 
   it("summarizes the measure count and the error counts", () => {
@@ -468,7 +561,7 @@ describe("App", () => {
       rhythmBreaks: 0,
       firstWrongLabel: notes[2].label,
       wrongPitchNoteIds: [],
-      lateNoteIds: [],
+      lateNoteIds: [], shortNoteIds: [],
     }, 1, "RH");
     expect(wrapper.get("[data-test=feedback]").text()).toBe(expected);
     expect(wrapper.text()).not.toContain("%");

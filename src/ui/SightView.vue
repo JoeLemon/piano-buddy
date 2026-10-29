@@ -39,8 +39,6 @@ const props = defineProps<{
   profile: Profile;
   midiConnected: boolean;
   forcedScore?: Score | null;
-  /** 曲库跟弹：同一段可以反复练，不消耗「一条最多 2 遍」的额度。 */
-  practiceMode?: boolean;
 }>();
 
 type SightTarget = { keys: string[]; ids: string[]; midis: number[] };
@@ -281,27 +279,25 @@ function beginPlay() {
   preview?.stop();
   preview = null;
   previewIndex.value = null;
-  if (!props.practiceMode) {
-    const registration = registerSightUse(profileState.value, score.value.id);
-    if (!registration.allowed) {
-      let next = { ...registration.profile, lastSeed: profileState.value.lastSeed + 1 };
-      next = pruneExhaustedErrorSnippet(next, score.value.id);
-      profileState.value = next;
-      emit("update-profile", profileState.value);
-      if (props.forcedScore) {
-        phase.value = "done";
-        return;
-      }
-      openLine();
-      phase.value = "prepare";
-      syncPrepare();
-      return;
-    }
-    let next = registration.profile;
+  const registration = registerSightUse(profileState.value, score.value.id);
+  if (!registration.allowed) {
+    let next = { ...registration.profile, lastSeed: profileState.value.lastSeed + 1 };
     next = pruneExhaustedErrorSnippet(next, score.value.id);
     profileState.value = next;
     emit("update-profile", profileState.value);
+    if (props.forcedScore) {
+      phase.value = "done";
+      return;
+    }
+    openLine();
+    phase.value = "prepare";
+    syncPrepare();
+    return;
   }
+  let next = registration.profile;
+  next = pruneExhaustedErrorSnippet(next, score.value.id);
+  profileState.value = next;
+  emit("update-profile", profileState.value);
   phase.value = "play";
   resetProgress();
   playStartedAt = performance.now();
@@ -342,7 +338,13 @@ function finishPlay() {
 }
 
 function onNote(note: MidiNote) {
-  if (!props.midiConnected || note.kind !== "on" || phase.value !== "play" || !score.value) return;
+  if (!props.midiConnected || phase.value !== "play" || !score.value) return;
+  // 抬手不改变进度，只补时值：按住多久是音长的事，和第几个音无关。
+  // 视奏的口径是「弹错也别停」，学生常常按住一个音继续往下读。
+  if (note.kind === "off") {
+    recordRelease(note.midi, note.timeMs - playStartedAt);
+    return;
+  }
   const target = targets.value[targetIndex.value];
   if (!target) return;
   played.push({ midi: note.midi, timeMs: note.timeMs - playStartedAt });
@@ -370,6 +372,23 @@ function onNote(note: MidiNote) {
   targetIndex.value += 1;
   paintProgress();
   scrollToCursor();
+}
+
+/**
+ * 把抬手时刻补到「最近一次按下这个音且还没松」的那一击上。
+ *
+ * MIDI 的 note-on/off 本来按音高配对，所以不能限定当前目标：按住一个音
+ * 等下一个音时，进度早就往前走了。旋律里的重复音同理——从后往前找，
+ * 先配到的一定是后按的那一次。
+ */
+function recordRelease(midi: number, offMs: number) {
+  for (let index = played.length - 1; index >= 0; index -= 1) {
+    const entry = played[index];
+    if (entry.midi === midi && entry.offMs == null) {
+      entry.offMs = offMs;
+      return;
+    }
+  }
 }
 
 function paintProgress() {
@@ -568,7 +587,7 @@ function lineMs(current: Score, tempo: number): number {
     <header class="sight-head">
       <div class="head-text">
         <p v-if="phase === 'prepare' && score" class="remaining" data-test="sight-remaining">
-          {{ practiceMode ? "跟弹本段，可反复练" : `这条还能练 ${remainingPlays} 遍` }}
+          这条还能练 {{ remainingPlays }} 遍
         </p>
         <p v-else class="remaining">{{ phase === "prepare" ? "" : "别停下，弹错也继续往下读。" }}</p>
       </div>

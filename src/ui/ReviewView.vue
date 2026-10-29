@@ -15,6 +15,8 @@ const props = defineProps<{
   hand: Hand | "BOTH";
   wrongPitchNoteIds: string[];
   lateNoteIds: string[];
+  /** 按住不够目标时值六成的音；只观察，不判错。 */
+  shortNoteIds?: string[];
   hasErrorBook: boolean;
   /** 复盘后的主按钮文案：曲库跟弹是「回到曲库」，视奏是「再看一条新的」。 */
   nextLabel?: string;
@@ -27,6 +29,8 @@ const emit = defineEmits<{
 
 const staffEl = ref<HTMLElement | null>(null);
 const grand = computed(() => props.score.hands.length === 2);
+
+const shortCount = computed(() => props.shortNoteIds?.length ?? 0);
 
 /** 练习总览：小节数量 + 简要错误描述（不用百分制）。 */
 const summary = computed(() => {
@@ -73,6 +77,10 @@ function draw() {
     <h1>复盘</h1>
     <p data-test="feedback">{{ feedback }}</p>
     <p class="summary" data-test="review-summary">{{ summary }}</p>
+    <!-- 音长只观察、不判错：不影响上面的结论，用一个问句提醒，不用警告色 -->
+    <p v-if="shortCount > 0" class="observation" data-test="review-length">
+      {{ shortCount }} 个音按得太短，长音符要按住不放。
+    </p>
     <p class="legend">
       <span class="item"><span class="swatch pitch"></span>错音</span>
       <span class="item"><span class="swatch late"></span>偏晚</span>
@@ -110,6 +118,12 @@ p {
 .summary {
   font-size: 0.9rem;
   font-variant-numeric: tabular-nums;
+}
+
+/* 音长是附加观察：比正文弱一档，但不弱到看不见——这是全页唯一的新信息 */
+.observation {
+  color: var(--pb-ink-2);
+  font-size: 0.85rem;
 }
 
 .legend {

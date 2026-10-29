@@ -1,4 +1,5 @@
 import type { Hand, Score } from "../domain/types";
+import { tiesTo } from "../domain/tie";
 import { DURATION_BEATS } from "../domain/vocabulary";
 import { pitchToMidi } from "../domain/pitch";
 
@@ -82,7 +83,8 @@ export function scoreToMotion(score: Score, title: string = score.id): MotionSco
               finger: note.fingers?.[pitchIndex] ?? 0,
               velocity: 0.75,
               voice: 0,
-              tie: false,
+              // 本音后面还有连线：demo 遇到下一条同音时不要重新击键。
+              tie: tiesTo(note),
             });
           });
         }
@@ -141,10 +143,15 @@ export function validateMotion(motion: MotionScore): MotionValidation {
   return { ok: errors.length === 0, errors };
 }
 
-/** 拍 → 秒。demo 的 ScoreBuilder 本来就是 beat × spb，这里保持同一约定。 */
+/**
+ * 拍 → 秒。demo 的 ScoreBuilder 本来就是 beat × spb，这里保持同一约定。
+ *
+ * 连音线在这里合成一条长音：demo 的按键事件只有 start/end，没有 tie 概念，
+ * 留着两段首尾相接的 event 会变成「同一个键弹两次」。
+ */
 export function toDemoEvents(motion: MotionScore): DemoNoteEvent[] {
   const secondsPerBeat = 60 / motion.bpm;
-  return motion.notes.map((note) => ({
+  return mergeTiedNotes(motion.notes).map((note) => ({
     midi: note.midi,
     start: +(note.onsetBeats * secondsPerBeat).toFixed(3),
     end: +((note.onsetBeats + note.durationBeats) * secondsPerBeat).toFixed(3),
@@ -152,6 +159,27 @@ export function toDemoEvents(motion: MotionScore): DemoNoteEvent[] {
     finger: note.finger,
     vel: note.velocity,
   }));
+}
+
+/** 把 `tie: true` 的链逐段接到前一个同手同音的音上。 */
+function mergeTiedNotes(notes: readonly MotionNote[]): MotionNote[] {
+  const merged: MotionNote[] = [];
+  for (const note of notes) {
+    const previous = merged[merged.length - 1];
+    const joins =
+      previous !== undefined &&
+      previous.tie &&
+      previous.hand === note.hand &&
+      previous.midi === note.midi &&
+      Math.abs(previous.onsetBeats + previous.durationBeats - note.onsetBeats) < 1e-6;
+    if (joins) {
+      previous.durationBeats += note.durationBeats;
+      previous.tie = note.tie;
+      continue;
+    }
+    merged.push({ ...note });
+  }
+  return merged;
 }
 
 export function motionDurationSeconds(motion: MotionScore): number {

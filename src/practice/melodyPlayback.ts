@@ -1,42 +1,48 @@
 import { parsePitchLabel } from "../domain/pitch";
 import type { Duration, Score } from "../domain/types";
-import type { PlaybackQuestion } from "./melodyTypes";
+import { MELODY_BPM, type PlaybackQuestion } from "./melodyTypes";
+import { scoreFromPracticeStaff, type PracticeStaffPrompt } from "./practiceScore";
 
 /**
- * 把 Playback 题库的一条旋律转成现有带时值 IR，供 previewScore 试听。
+ * 旋律题的谱面：主音和弦占第一小节，旋律按拍分小节。
  *
- * 这里只用于「听旋律选调性」：主音和弦放在最前面，旋律放在同一个小节里。
- * 不渲染谱面，所以不要求小节时值严格配平；previewEvents 会按累计拍点播放。
+ * 谱面、试听、跟弹判定共用这一份 IR——听到的、看到的、判的是同一组音。
+ * 第一小节放主音和弦（听辨调性的锚点，3/4 用 3 拍、4/4 用 4 拍满小节），
+ * 旋律从第二小节开始，每小节按拍数配平。
  */
-export function melodyToScore(question: PlaybackQuestion): Score {
-  const notes = [
-    {
-      id: "tonic",
-      pitches: question.tonic.map((pitch) => parsePitchLabel(pitch)),
-      duration: (question.meter === "3/4" ? "hd" : "w") as Duration,
-    },
-    ...question.melody.map((note, index) => ({
-      id: `m${index + 1}`,
-      pitches: [parsePitchLabel(note.pitch)],
-      duration: durationFor(note.beats),
-    })),
-  ];
+export function melodyStaff(question: PlaybackQuestion): PracticeStaffPrompt {
+  const beatsPerBar = question.meter === "3/4" ? 3 : 4;
+  const measures = [[{ pitches: question.tonic, duration: (beatsPerBar === 3 ? "hd" : "w") as Duration }]];
 
-  return {
-    id: `practice.melody.${question.id}`,
-    mode: "reading-lesson",
-    level: 2,
-    meter: { beats: question.meter === "3/4" ? 3 : 4, beatValue: 4 },
-    keySignature: "C",
-    hands: ["RH"],
-    bpm: 80,
-    staves: {
-      RH: { clef: "treble", measures: [{ notes }] },
-    },
-  };
+  let current: { pitches: string[]; duration: Duration }[] = [];
+  let used = 0;
+  for (const note of question.melody) {
+    // 装不下就开新小节；单音不超过一小节（题库节奏按小节配平）。
+    if (used > 0 && used + note.beats > beatsPerBar) {
+      measures.push(current);
+      current = [];
+      used = 0;
+    }
+    current.push({ pitches: [note.pitch], duration: durationFor(note.beats) });
+    used += note.beats;
+  }
+  if (current.length > 0) measures.push(current);
+
+  return { clef: "treble", groups: [], measures };
 }
 
-function durationFor(beats: number): Duration {
+/**
+ * 把 Playback 题库的一条旋律转成现有带时值 IR，供 previewScore 试听与谱面渲染。
+ *
+ * 直接派生自 `melodyStaff`：不另存一份音符数据，试听听到的与谱面画出来
+ * 的永远是同一组音。节拍从题目的 meter 来，3/4 与 4/4 的小节线才画得对。
+ */
+export function melodyToScore(question: PlaybackQuestion): Score {
+  return scoreFromPracticeStaff(melodyStaff(question), question.id, MELODY_BPM, question.meter === "3/4" ? 3 : 4);
+}
+
+/** 拍数 → 时值符号。题库只用二分之一的粒度，取不齐时落到上一级。 */
+export function durationFor(beats: number): Duration {
   if (beats >= 4) return "w";
   if (beats >= 3) return "hd";
   if (beats >= 2) return "h";

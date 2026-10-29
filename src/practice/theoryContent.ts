@@ -224,14 +224,65 @@ export type ProgressionExample = {
   key: string;
   chords: readonly string[];
   answer: string;
+  /** 每个和弦一小节，练习页据此画谱并试听。 */
+  staff: PracticeStaffPrompt;
 };
+
+/** 把三个和弦的 voicing 排成三小节，每小节一个全音符和弦。 */
+function progressionStaff(voicings: readonly (readonly string[])[]): PracticeStaffPrompt {
+  return {
+    clef: "treble",
+    groups: [],
+    measures: voicings.map((pitches) => [{ pitches, duration: "w" }]),
+  };
+}
 
 /** 参考项目的四条 Level 6 进行，用 C 大调 / A 小调写成可读例子。 */
 export const PROGRESSIONS: readonly ProgressionExample[] = [
-  { id: "major-141", key: "C 大调", chords: ["C", "F", "C"], answer: "I – IV – I" },
-  { id: "major-151", key: "C 大调", chords: ["C", "G", "C"], answer: "I – V – I" },
-  { id: "minor-141", key: "A 小调", chords: ["Am", "Dm", "Am"], answer: "i – iv – i" },
-  { id: "minor-151", key: "A 小调", chords: ["Am", "E", "Am"], answer: "i – V – i" },
+  {
+    id: "major-141",
+    key: "C 大调",
+    chords: ["C", "F", "C"],
+    answer: "I – IV – I",
+    staff: progressionStaff([
+      ["C4", "E4", "G4"],
+      ["F4", "A4", "C5"],
+      ["C4", "E4", "G4"],
+    ]),
+  },
+  {
+    id: "major-151",
+    key: "C 大调",
+    chords: ["C", "G", "C"],
+    answer: "I – V – I",
+    staff: progressionStaff([
+      ["C4", "E4", "G4"],
+      ["G4", "B4", "D5"],
+      ["C4", "E4", "G4"],
+    ]),
+  },
+  {
+    id: "minor-141",
+    key: "A 小调",
+    chords: ["Am", "Dm", "Am"],
+    answer: "i – iv – i",
+    staff: progressionStaff([
+      ["A4", "C5", "E5"],
+      ["D4", "F4", "A4"],
+      ["A4", "C5", "E5"],
+    ]),
+  },
+  {
+    id: "minor-151",
+    key: "A 小调",
+    chords: ["Am", "E", "Am"],
+    answer: "i – V – i",
+    staff: progressionStaff([
+      ["A4", "C5", "E5"],
+      ["E4", "G#4", "B4"],
+      ["A4", "C5", "E5"],
+    ]),
+  },
 ];
 
 export const KEY_LABELS: Record<PlaybackKey, string> = {

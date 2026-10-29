@@ -317,6 +317,136 @@ describe("createPreviewPlayer", () => {
   });
 });
 
+describe("createPreviewPlayer loop", () => {
+  it("replays from the loop start instead of ending", () => {
+    vi.useFakeTimers();
+    installPlainAudioContext();
+    const seen: number[] = [];
+    let ended = 0;
+    const player = createPreviewPlayer(lineWithRest, "RH", 60, {
+      onNote: (index) => seen.push(index),
+      onEnd: () => {
+        ended += 1;
+      },
+    });
+
+    try {
+      // 循环前三拍：含第一个音（第 0 拍）和第二个音（第 2 拍），
+      // 第三个音在第 3 拍，正好压在循环区外，不该响。
+      player.setLoop({ start: 0, end: 3 });
+      player.play();
+      vi.advanceTimersByTime(60);
+      expect(seen).toEqual([0]);
+
+      vi.advanceTimersByTime(2000);
+      expect(seen).toEqual([0, 1]);
+      // 播到循环末端就该重播，不是结束
+      expect(ended).toBe(0);
+
+      vi.advanceTimersByTime(1060);
+      expect(seen).toEqual([0, 1, 0]);
+      // 重播后播放头回到循环起点附近，而不是停在末端
+      expect(player.positionBeats).toBeLessThan(0.5);
+      vi.advanceTimersByTime(20000);
+      expect(ended).toBe(0);
+    } finally {
+      player.stop();
+    }
+  });
+
+  it("clears the loop so playback runs to the end", () => {
+    vi.useFakeTimers();
+    installPlainAudioContext();
+    let ended = 0;
+    const player = createPreviewPlayer(lineWithRest, "RH", 60, {
+      onEnd: () => {
+        ended += 1;
+      },
+    });
+
+    try {
+      player.setLoop({ start: 0, end: 2 });
+      player.setLoop(null);
+      player.play();
+      vi.advanceTimersByTime(5000);
+      expect(ended).toBe(1);
+    } finally {
+      player.stop();
+    }
+  });
+
+  it("treats an empty range as no loop and clamps seek/stop to the range", () => {
+    vi.useFakeTimers();
+    installPlainAudioContext();
+    const player = createPreviewPlayer(lineWithRest, "RH", 60);
+    try {
+      player.setLoop({ start: 2, end: 2 });
+      player.play();
+      vi.advanceTimersByTime(5000);
+      expect(player.playing).toBe(false);
+      expect(player.positionBeats).toBe(4);
+
+      player.setLoop({ start: 0, end: 2 });
+      player.seek(3.5);
+      expect(player.positionBeats).toBe(2);
+      player.stop();
+      // 循环时「回到开头」是循环起点，不是整首开头
+      expect(player.positionBeats).toBe(0);
+    } finally {
+      player.stop();
+    }
+  });
+
+  it("re-clamps the loop when a hand switch changes the length", () => {
+    vi.useFakeTimers();
+    installPlainAudioContext();
+    const twoHands: Score = {
+      ...oneNote,
+      hands: ["RH", "LH"],
+      staves: {
+        RH: oneNote.staves.RH!,
+        LH: {
+          clef: "bass",
+          measures: [
+            {
+              notes: [
+                {
+                  id: "lh",
+                  pitches: [{ step: "C", octave: 3, alteration: 0 }],
+                  duration: "w",
+                },
+              ],
+            },
+          ],
+        },
+      },
+    };
+    const seen: number[] = [];
+    const player = createPreviewPlayer(twoHands, "LH", 60, {
+      onNote: (index) => seen.push(index),
+    });
+    try {
+      player.setLoop({ start: 0, end: 4 });
+      player.setHand("RH");
+      // 右手只有 1 拍：循环区被钳回首拍，不会留下一个越界的区间
+      player.play();
+      vi.advanceTimersByTime(60);
+      expect(seen).toEqual([0]);
+      vi.advanceTimersByTime(1100);
+      // 越过唯一一拍后重播，而不是结束或静默卡住
+      expect(seen).toEqual([0, 0]);
+      expect(player.playing).toBe(true);
+
+      player.setLoop(null);
+      vi.advanceTimersByTime(3000);
+      expect(player.playing).toBe(false);
+      expect(player.positionBeats).toBe(1);
+    } finally {
+      player.stop();
+    }
+  });
+});
+
 describe("previewScore progress", () => {
   it("reports every sounding note in order and then the end", () => {
     vi.useFakeTimers();

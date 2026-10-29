@@ -1,12 +1,16 @@
+import { createHash } from "node:crypto";
 import { readdirSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import type { Score } from "../src/domain/types";
 import {
+  checksumPayload,
+  MAX_ASSET_BYTES,
   knownSkillIds,
   loadPackage,
   memorySource,
   parseManifest,
+  validateManifest,
 } from "../src/repertoire";
 import { validateSongContent } from "../src/repertoire/contentValidation";
 import { rateScore } from "../src/repertoire/difficulty";
@@ -105,5 +109,110 @@ describe("欢乐颂三档编配", () => {
     expect(rows[1].required.has("pos.shift")).toBe(true);
     expect(rows[1].required.has("chord.triad")).toBe(true);
     expect(rows[2].required.has("texture.broken")).toBe(true);
+  });
+});
+
+/** 一个字段齐全的最小 song manifest；各用例在此基础上增删字段。 */
+const BASE_MANIFEST = {
+  schemaVersion: 1,
+  id: "pkg.test",
+  name: "测试包",
+  type: "song",
+  version: "1.0.0",
+  songId: "song.test",
+  arrangementId: "arr.test",
+  songTitle: "测试曲目",
+  skillDeps: [] as string[],
+  assets: ["content/score.json"],
+};
+
+describe("数据包校验加固", () => {
+  it("未知顶层字段给警告而不是报错", () => {
+    const result = validateManifest({ ...BASE_MANIFEST, bpm: 120 }, knownSkillIds());
+    expect(result.ok).toBe(true);
+    expect(result.warnings.some((w) => w.includes("未知字段") && w.includes("bpm"))).toBe(true);
+  });
+
+  it("difficulty / rights 里的未知字段也逐层点名", () => {
+    const difficulty = validateManifest(
+      { ...BASE_MANIFEST, difficulty: { level: 2, bpm: 80, tempo: 80 } },
+      knownSkillIds(),
+    );
+    expect(difficulty.warnings.some((w) => w.includes("difficulty.tempo"))).toBe(true);
+
+    const rights = validateManifest(
+      { ...BASE_MANIFEST, rights: { type: "original", foo: "bar" } },
+      knownSkillIds(),
+    );
+    expect(rights.warnings.some((w) => w.includes("rights.foo"))).toBe(true);
+  });
+
+  it("授权已过期给警告，未到期不提示", () => {
+    const now = new Date("2026-10-28T00:00:00Z");
+    const expired = validateManifest(
+      { ...BASE_MANIFEST, rights: { type: "licensed", expiresAt: "2020-01-01" } },
+      knownSkillIds(),
+      { now },
+    );
+    expect(expired.ok).toBe(true);
+    expect(expired.warnings.some((w) => w.includes("过期"))).toBe(true);
+
+    const future = validateManifest(
+      { ...BASE_MANIFEST, rights: { type: "licensed", expiresAt: "2030-01-01" } },
+      knownSkillIds(),
+      { now },
+    );
+    expect(future.warnings.some((w) => w.includes("过期"))).toBe(false);
+  });
+
+  it("非法日期是错误，不是警告", () => {
+    const result = validateManifest(
+      { ...BASE_MANIFEST, rights: { type: "licensed", expiresAt: "不是日期" } },
+      knownSkillIds(),
+    );
+    expect(result.ok).toBe(false);
+    expect(result.errors.some((e) => e.includes("不是合法日期"))).toBe(true);
+  });
+
+  it("checksum 与资源一致时通过，被改动时报错", async () => {
+    const payload = checksumPayload(["content/score.json"], { "content/score.json": scoreText });
+    const digest = createHash("sha256").update(payload, "utf8").digest("hex");
+
+    const okSource = memorySource({
+      "manifest.json": JSON.stringify({ ...BASE_MANIFEST, checksum: `sha256:${digest}` }),
+      "content/score.json": scoreText,
+    });
+    const ok = await loadPackage(okSource, knownSkillIds());
+    expect(ok.ok).toBe(true);
+
+    // 同一个 checksum，内容被替换：必须拒绝。
+    const tampered = memorySource({
+      "manifest.json": JSON.stringify({ ...BASE_MANIFEST, checksum: `sha256:${digest}` }),
+      "content/score.json": scoreText + " ",
+    });
+    const bad = await loadPackage(tampered, knownSkillIds());
+    expect(bad.ok).toBe(false);
+    if (!bad.ok) expect(bad.errors.some((e) => e.includes("checksum 不匹配"))).toBe(true);
+  });
+
+  it("资源超出单文件上限时拒绝加载", async () => {
+    const oversized = "x".repeat(MAX_ASSET_BYTES + 1);
+    const source = memorySource({
+      "manifest.json": JSON.stringify(BASE_MANIFEST),
+      "content/score.json": oversized,
+    });
+    const result = await loadPackage(source, knownSkillIds());
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.errors.some((e) => e.includes("单文件上限"))).toBe(true);
+  });
+
+  it("manifest 警告（如未知字段）透传到加载结果", async () => {
+    const source = memorySource({
+      "manifest.json": JSON.stringify({ ...BASE_MANIFEST, unknownField: 1 }),
+      "content/score.json": scoreText,
+    });
+    const result = await loadPackage(source, knownSkillIds());
+    expect(result.ok).toBe(true);
+    expect(result.warnings.some((w) => w.includes("未知字段"))).toBe(true);
   });
 });

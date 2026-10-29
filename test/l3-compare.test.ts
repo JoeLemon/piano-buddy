@@ -125,7 +125,7 @@ describe("L3 chord compare", () => {
       rhythmBreaks: 0,
       firstWrongLabel: "C4",
       wrongPitchNoteIds: ["a", "b", "c"],
-      lateNoteIds: [],
+      lateNoteIds: [], shortNoteIds: [],
     };
     expect(isPass(result, 3)).toBe(true);
     const profile = applyL3TestResult(initialProfile(), result);
@@ -139,7 +139,7 @@ describe("L3 chord compare", () => {
       rhythmBreaks: 0,
       firstWrongLabel: "C4",
       wrongPitchNoteIds: ["a"],
-      lateNoteIds: [],
+      lateNoteIds: [], shortNoteIds: [],
     };
     let profile = initialProfile();
     profile = applyL3TestResult(profile, failed);

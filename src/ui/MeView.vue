@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from "vue";
-import { canEnterSight, type Profile } from "../domain/profile";
+import { canEnterSight, practiceStatsTotals, type Profile } from "../domain/profile";
 import { formatMinutes, practiceSummary } from "../domain/practiceLog";
 import { L3_PREP_LESSONS } from "../practice";
 
@@ -56,11 +56,19 @@ const rows = computed(() => [
   { label: "视奏", value: sightReady.value ? "已解锁" : "未解锁" },
 ]);
 
-const practiceRows = computed(() => [
-  { label: "今日练习", value: `${practice.value.todayCount} 条 · ${formatMinutes(practice.value.todayMs)}` },
-  { label: "连续练习", value: `${practice.value.streak} 天` },
-  { label: "累计练习", value: `${practice.value.totalCount} 条 · ${formatMinutes(practice.value.totalMs)}` },
-]);
+const practiceRows = computed(() => {
+  const stats = practiceStatsTotals(props.profile.practiceStats);
+  const quiz =
+    stats.answered === 0
+      ? "还没答过"
+      : `共 ${stats.answered} 题 · 正确率 ${Math.round((stats.correct / stats.answered) * 100)}%`;
+  return [
+    { label: "今日练习", value: `${practice.value.todayCount} 条 · ${formatMinutes(practice.value.todayMs)}` },
+    { label: "连续练习", value: `${practice.value.streak} 天` },
+    { label: "累计练习", value: `${practice.value.totalCount} 条 · ${formatMinutes(practice.value.totalMs)}` },
+    { label: "乐理答题", value: quiz },
+  ];
+});
 </script>
 
 <template>

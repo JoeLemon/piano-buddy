@@ -52,7 +52,14 @@ export interface CatalogSource {
 export interface CatalogBuildResult {
   ok: boolean;
   errors: string[];
+  /** 不阻止构建、但需要留意的包（例如授权已过期被下架）。 */
+  warnings: string[];
   catalog?: Catalog;
+}
+
+export interface CatalogBuildOptions {
+  /** 判断授权是否到期的「现在」；默认当前时间，测试可注入固定值。 */
+  now?: Date;
 }
 
 function countMeasures(score: Score): number {
@@ -68,8 +75,13 @@ function countMeasures(score: Score): number {
  * 把多个已校验的 song 包聚合成 catalog。纯函数，不读文件系统；
  * 构建脚本和测试共用同一套规则。
  */
-export function buildCatalog(sources: CatalogSource[]): CatalogBuildResult {
+export function buildCatalog(
+  sources: CatalogSource[],
+  options: CatalogBuildOptions = {},
+): CatalogBuildResult {
   const errors: string[] = [];
+  const warnings: string[] = [];
+  const nowMs = (options.now ?? new Date()).getTime();
   const packageIds = new Set<string>();
   const arrangementIds = new Set<string>();
   const songs = new Map<
@@ -82,6 +94,15 @@ export function buildCatalog(sources: CatalogSource[]): CatalogBuildResult {
     if (manifest.type !== "song") {
       errors.push(`${label}：只有 song 包能进入曲库`);
       continue;
+    }
+    // 授权到期即下架：不进目录，留一条警告（构建不失败）。
+    const expiresAt = manifest.rights?.expiresAt;
+    if (expiresAt) {
+      const expiresMs = Date.parse(expiresAt);
+      if (!Number.isNaN(expiresMs) && expiresMs < nowMs) {
+        warnings.push(`${label}：授权已于 ${expiresAt} 到期，已下架`);
+        continue;
+      }
     }
     if (!manifest.songId) {
       errors.push(`${label}：缺少 songId，无法归入歌曲`);
@@ -147,7 +168,7 @@ export function buildCatalog(sources: CatalogSource[]): CatalogBuildResult {
     });
   }
 
-  if (errors.length > 0) return { ok: false, errors };
+  if (errors.length > 0) return { ok: false, errors, warnings };
 
   const catalog: Catalog = {
     version: 1,
@@ -166,5 +187,5 @@ export function buildCatalog(sources: CatalogSource[]): CatalogBuildResult {
       ),
   };
 
-  return { ok: true, errors: [], catalog };
+  return { ok: true, errors: [], warnings, catalog };
 }

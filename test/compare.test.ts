@@ -61,7 +61,7 @@ describe("compare", () => {
       rhythmBreaks: 0,
       firstWrongLabel: "F4",
       wrongPitchNoteIds: ["a", "b", "c"],
-      lateNoteIds: [],
+      lateNoteIds: [], shortNoteIds: [],
     };
     expect(feedbackText(failed, 1, "RH")).toBe(
       "F 还要找一下。它在 E 上面一格，右手四指。再来一条新的。",
@@ -71,7 +71,7 @@ describe("compare", () => {
       rhythmBreaks: 0,
       firstWrongLabel: "D4",
       wrongPitchNoteIds: ["x"],
-      lateNoteIds: [],
+      lateNoteIds: [], shortNoteIds: [],
     };
     expect(feedbackText(passed, 1, "RH")).toBe(
       "这些音可以直接认了。接下来的视奏里只会用到它们。",
@@ -92,12 +92,134 @@ describe("compare", () => {
       rhythmBreaks: 0,
       firstWrongLabel: null,
       wrongPitchNoteIds: [],
-      lateNoteIds: [],
+      lateNoteIds: [], shortNoteIds: [],
     };
     const profile = applyTestResult(initialProfile(), ["RH"], [passed]);
     expect(profile.l1RightPassed).toBe(true);
     expect(profile.l1LeftPassed).toBe(false);
     expect(profile.lessonId).toBe("L1-4");
     expect(profile.lessonPhase).toBe("notes");
+  });
+});
+
+/** 一个二分音符 + 两个四分音符：长短都有，才能看出音长判定按各自的时值算。 */
+function holdScore(): Score {
+  return {
+    id: "hold",
+    mode: "reading-test",
+    level: 1,
+    meter: { beats: 4, beatValue: 4 },
+    keySignature: "C",
+    hands: ["RH"],
+    bpm: 60,
+    staves: {
+      RH: {
+        clef: "treble",
+        measures: [
+          {
+            notes: [
+              { id: "half", pitches: [{ step: "C", octave: 4, alteration: 0 as const }], duration: "h" as const, fingers: [1] },
+              { id: "q1", pitches: [{ step: "D", octave: 4, alteration: 0 as const }], duration: "q" as const, fingers: [2] },
+              { id: "q2", pitches: [{ step: "E", octave: 4, alteration: 0 as const }], duration: "q" as const, fingers: [3] },
+            ],
+          },
+        ],
+      },
+    },
+  };
+}
+
+describe("hold length in compare", () => {
+  it("reports notes released before 60% of their duration", () => {
+    const played = [
+      { midi: 60, timeMs: 0, offMs: 1000 }, // 二分音符只按 1 拍（需 1.2）
+      { midi: 62, timeMs: 2000, offMs: 2700 }, // 四分音符按 0.7 拍，够
+      { midi: 64, timeMs: 3000, offMs: 3400 }, // 四分音符只按 0.4 拍
+    ];
+    const result = compare(holdScore(), "RH", played, 60);
+    expect(result.shortNoteIds).toEqual(["half", "q2"]);
+    // 音长只观察：错音、节奏判罚一个都没多算。
+    expect(result.pitchErrors).toBe(0);
+    expect(result.rhythmBreaks).toBe(0);
+    expect(result.lateNoteIds).toEqual([]);
+  });
+
+  it("counts exactly 60% as held and skips notes released without an off", () => {
+    const result = compare(holdScore(), "RH", [
+      { midi: 60, timeMs: 0, offMs: 1200 }, // 正好六成
+      { midi: 62, timeMs: 2000, offMs: 2600 }, // 正好六成
+      { midi: 64, timeMs: 3000 }, // 没收到 note-off：无从判断
+    ], 60);
+    expect(result.shortNoteIds).toEqual([]);
+  });
+
+  it("does not judge holds for a wrong pitch", () => {
+    const result = compare(holdScore(), "RH", [
+      { midi: 61, timeMs: 0, offMs: 100 }, // 音就错了，按住多久说明不了什么
+      { midi: 62, timeMs: 2000, offMs: 2700 },
+      { midi: 64, timeMs: 3000, offMs: 3700 },
+    ], 60);
+    expect(result.shortNoteIds).toEqual([]);
+    expect(result.pitchErrors).toBe(1);
+  });
+});
+
+/** 同一拍上左手全音符、右手四分音符：短的音本来就要先抬，不能拿长的要求它。 */
+function mixedBeatScore(): Score {
+  return {
+    id: "mixed-beat",
+    mode: "reading-test",
+    level: 3,
+    meter: { beats: 4, beatValue: 4 },
+    keySignature: "C",
+    hands: ["RH", "LH"],
+    bpm: 60,
+    staves: {
+      RH: {
+        clef: "treble",
+        measures: [
+          {
+            notes: [
+              { id: "rh-q", pitches: [{ step: "C", octave: 4, alteration: 0 as const }], duration: "q" as const, fingers: [1] },
+              { id: "rh-h", pitches: [{ step: "D", octave: 4, alteration: 0 as const }], duration: "h" as const, fingers: [2] },
+            ],
+          },
+        ],
+      },
+      LH: {
+        clef: "bass",
+        measures: [
+          {
+            notes: [
+              { id: "lh-w", pitches: [{ step: "C", octave: 3, alteration: 0 as const }], duration: "w" as const, fingers: [5] },
+            ],
+          },
+        ],
+      },
+    },
+  };
+}
+
+describe("hold length in the chord path", () => {
+  it("judges each note by its own duration on a shared beat", () => {
+    const played = [
+      { midi: 60, timeMs: 0, offMs: 700 }, // 右手四分音符按 0.7 拍，够
+      { midi: 48, timeMs: 0, offMs: 1000 }, // 左手全音符只按 1 拍（需 2.4）
+      { midi: 62, timeMs: 1000, offMs: 2700 }, // 右手二分音符按 1.7 拍（需 1.2）
+    ];
+    const result = compare(mixedBeatScore(), "BOTH", played, 60);
+    expect(result.shortNoteIds).toEqual(["lh-w"]);
+    expect(result.pitchErrors).toBe(0);
+  });
+
+  it("marks a beat short when one finger lifts early", () => {
+    const played = [
+      { midi: 60, timeMs: 0, offMs: 700 }, // 右手四分音符，按时抬
+      { midi: 48, timeMs: 0, offMs: 200 }, // 左手全音符只按 0.2 拍
+      { midi: 62, timeMs: 1000, offMs: 2700 }, // 右手二分音符，够
+    ];
+    const result = compare(mixedBeatScore(), "BOTH", played, 60);
+    expect(result.shortNoteIds).toEqual(["lh-w"]);
+    expect(result.pitchErrors).toBe(0);
   });
 });

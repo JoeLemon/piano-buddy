@@ -105,10 +105,12 @@ const bleAvailable = computed(() => isBleSupported());
 const theme = ref<"light" | "dark">(readInitialTheme());
 const sightSession = ref(0);
 const forcedScore = ref<Score | null>(null);
-/** 视奏/跟弹的来源，决定复盘后回哪里。 */
-const sightOrigin = ref<"sight" | "repertoire" | "error">("sight");
+/** 视奏的来源，决定复盘后回哪里。曲库跟弹是就地进行的，不经过这里。 */
+const sightOrigin = ref<"sight" | "error">("sight");
 /** 从曲库缺技能直达 L3 预备课时，打开的那一节。 */
 const l3Focus = ref<string | null>(null);
+/** 从曲库缺技能直达乐理练习的 L4 预备关时，打开的那一关。 */
+const practiceFocus = ref<string | null>(null);
 const metronomeOn = ref(false);
 const metronomeBpm = ref(readMetronomeBpm());
 let metronomePlayback: { stop: () => void } | null = null;
@@ -118,6 +120,7 @@ const review = ref<{
   hand: Hand | "BOTH";
   wrongPitchNoteIds: string[];
   lateNoteIds: string[];
+  shortNoteIds: string[];
 } | null>(null);
 
 const testHands = ref<Hand[]>([]);
@@ -582,14 +585,6 @@ function onOpenRepertoire() {
   navigateTo("repertoire");
 }
 
-/** 曲库「跟弹本段」：把切好的片段当视奏谱打开，但保留曲库来路。 */
-function onFollowScore(payload: { score: Score; hand: Hand | "BOTH"; title: string }) {
-  forcedScore.value = payload.score;
-  sightOrigin.value = "repertoire";
-  sightSession.value += 1;
-  navigateTo("sight");
-}
-
 /** 曲库缺技能直达：只改课位，不清已通过的 L1/L2/L3。 */
 function onOpenLesson(lessonId: LessonId) {
   // 曲库可以先点 L3 技能，但没 L2 过关时仍然先回识谱主线。
@@ -608,6 +603,12 @@ function onOpenTheory(lessonId: string) {
   navigateTo("l3");
 }
 
+/** 曲库缺技能直达乐理练习的 L4 预备关：打开练习页并开到这一关。 */
+function onOpenStage(stageId: string) {
+  practiceFocus.value = stageId;
+  navigateTo("practice");
+}
+
 /** 学习分区落地页：没有自评就没有课程线，先回自评。 */
 function onOpenLearn() {
   if (!profile.value.assessment) {
@@ -618,6 +619,8 @@ function onOpenLearn() {
 }
 
 function onOpenPractice() {
+  // 清掉从曲库带过来的关卡焦点：从导航栏进练习页就是自由练习。
+  practiceFocus.value = null;
   navigateTo("practice");
 }
 
@@ -683,19 +686,13 @@ function onSightFinished(payload: {
     hand: payload.hand,
     wrongPitchNoteIds: payload.wrongPitchNoteIds,
     lateNoteIds: payload.lateNoteIds,
+    shortNoteIds: payload.result.shortNoteIds,
   };
   forcedScore.value = null;
   screen.value = "review";
 }
 
 function onReviewNext() {
-  if (sightOrigin.value === "repertoire") {
-    review.value = null;
-    forcedScore.value = null;
-    sightOrigin.value = "sight";
-    screen.value = "repertoire";
-    return;
-  }
   persist({ ...profile.value, lastSeed: profile.value.lastSeed + 1 });
   review.value = null;
   forcedScore.value = null;
@@ -1222,7 +1219,6 @@ function lineMs(current: Score, hand: Hand | "BOTH", tempo: number): number {
         :profile="profile"
         :midi-connected="midiConnected"
         :forced-score="forcedScore"
-        :practice-mode="sightOrigin === 'repertoire'"
         @update-profile="onProfile"
         @finished="onSightFinished"
       />
@@ -1232,14 +1228,18 @@ function lineMs(current: Score, hand: Hand | "BOTH", tempo: number): number {
         @open-reading="onOpenReading"
         @open-lesson="onOpenLesson"
         @open-theory="onOpenTheory"
-        @follow-score="onFollowScore"
+        @open-stage="onOpenStage"
+        @update-profile="onProfile"
       />
       <PracticeView
         v-else-if="screen === 'practice'"
         :profile="profile"
+        :midi-connected="midiConnected"
+        :focus-stage-id="practiceFocus ?? undefined"
         @update-profile="onProfile"
         @open-sight="onOpenSight"
         @open-error="onOpenError"
+        @open-theory="onOpenTheory"
       />
       <L3PrepView
         v-else-if="screen === 'l3'"
@@ -1254,8 +1254,9 @@ function lineMs(current: Score, hand: Hand | "BOTH", tempo: number): number {
         :hand="review.hand"
         :wrong-pitch-note-ids="review.wrongPitchNoteIds"
         :late-note-ids="review.lateNoteIds"
+        :short-note-ids="review.shortNoteIds"
         :has-error-book="profile.errorSnippets.length > 0"
-        :next-label="sightOrigin === 'repertoire' ? '回到曲库' : '再看一条新的'"
+        :next-label="'再看一条新的'"
         @next="onReviewNext"
         @retry-error="onReviewRetryError"
       />

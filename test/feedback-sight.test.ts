@@ -9,7 +9,7 @@ const empty: CompareResult = {
   rhythmBreaks: 0,
   firstWrongLabel: null,
   wrongPitchNoteIds: [],
-  lateNoteIds: [],
+  lateNoteIds: [], shortNoteIds: [],
 };
 
 const snippet: Score = {

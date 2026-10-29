@@ -1,5 +1,9 @@
 import { isPass, type CompareResult } from "./compare";
 import type { Hand, Score } from "./types";
+// 只引类型：账本的状态机在 repertoire/skillState，这里只负责它的持久化形状。
+// 两侧都是 import type，编译后不留运行时依赖，不会形成循环。
+import type { SkillLedger, SkillMastery } from "../repertoire/skillState";
+import type { SkillState } from "../repertoire/skillGraph";
 
 export type Assessment = {
   knowsTreble: boolean;
@@ -30,6 +34,19 @@ export type LessonId =
 /** 练习记录的类型，用于「今日 / 我的」汇总。 */
 export type PracticeKind = "reading" | "sight" | "test" | "theory" | "l3" | "repertoire";
 
+/**
+ * 乐理路径的进度。
+ *
+ * 这是「主线课程 + L3 预备课」唯一的一份理论进度：`completed` 存已通过的
+ * 节点 id，`best` 存每个节点最高答对数。`l3PrepCompleted` 作为旧档案的
+ * 兼容镜像保留，加载时会自动并进来。
+ */
+export type TheoryProgress = {
+  completed: string[];
+  best: Record<string, number>;
+};
+
+
 export type PracticeEntry = {
   /** 完成时间（毫秒时间戳）。 */
   at: number;
@@ -37,6 +54,19 @@ export type PracticeEntry = {
   /** 本次实际练习时长，进入页面到离开/完成之间计时。 */
   ms: number;
 };
+
+/**
+ * 乐理练习的按题型计数：key 是题型 id（notes/symbols/intervals/…）。
+ *
+ * 只累计「答了几题、答对几题」，不参与任何过关判定——技能是否过关由
+ * 关卡通过线与技能账本说话，正确率只是给学生和自己看的趋势。
+ */
+export type PracticeStat = {
+  answered: number;
+  correct: number;
+};
+
+export type PracticeStats = Record<string, PracticeStat>;
 
 export type Profile = {
   assessment: Assessment | null;
@@ -64,8 +94,19 @@ export type Profile = {
   seenSightTips: boolean;
   /** 已完成的 L3 预备课 id；只表示上过课，不等于技能已过关。 */
   l3PrepCompleted: string[];
+  /** 乐理路径的唯一进度（基础十关 + L3 预备课）。 */
+  theoryPath: TheoryProgress;
   /** 一条一条的练习记录；只保留最近 400 条，避免档案无限增长。 */
   practiceLog: PracticeEntry[];
+  /**
+   * 技能掌握账本：课内完成、曲库跟弹写的都是 learning，只有过关测试写 passed。
+   * 两条学习路径（按部就班 / 先选曲）因此共用同一份状态。
+   */
+  skillLedger: SkillLedger;
+  /** 整段弹对过的切片谱 id（id 已含编配、小节与手别，换手要重新弹对）。 */
+  followedSegments: string[];
+  /** 乐理练习按题型的累计答数/答对数；只做统计，不写过关。 */
+  practiceStats: PracticeStats;
 };
 
 const PRACTICE_KINDS: readonly PracticeKind[] = [
@@ -102,7 +143,11 @@ export function initialProfile(): Profile {
     seenReadingTips: false,
     seenSightTips: false,
     l3PrepCompleted: [],
+    theoryPath: { completed: [], best: {} },
     practiceLog: [],
+    skillLedger: {},
+    followedSegments: [],
+    practiceStats: {},
   };
 }
 
@@ -110,6 +155,8 @@ export function initialProfile(): Profile {
 export function mergeProfile(stored: Partial<Profile> | null | undefined): Profile {
   const base = initialProfile();
   if (!stored) return base;
+  const l3PrepCompleted = normalizeStringArray(stored.l3PrepCompleted);
+  const theoryPath = normalizeTheoryProgress(stored.theoryPath, l3PrepCompleted);
   // 不整体 spread stored：旧档案里被移除的字段（如 curriculumCompleted）不该被带回来。
   return {
     ...base,
@@ -135,11 +182,173 @@ export function mergeProfile(stored: Partial<Profile> | null | undefined): Profi
     lastSeed: stored.lastSeed ?? 1,
     seenReadingTips: stored.seenReadingTips ?? false,
     seenSightTips: stored.seenSightTips ?? false,
-    l3PrepCompleted: Array.isArray(stored.l3PrepCompleted)
-      ? [...new Set(stored.l3PrepCompleted.filter((id): id is string => typeof id === "string"))]
-      : [],
+    // L3 旧字段作为镜像保留：从 theoryPath 里补齐，避免两条线显示不一致。
+    l3PrepCompleted: uniqueStrings([
+      ...l3PrepCompleted,
+      ...theoryPath.completed.filter(isL3PrepId),
+    ]),
+    theoryPath,
     practiceLog: normalizePracticeLog(stored.practiceLog),
+    skillLedger: normalizeSkillLedger(stored.skillLedger),
+    followedSegments: normalizeStringArray(stored.followedSegments).slice(-MAX_FOLLOWED_SEGMENTS),
+    practiceStats: normalizePracticeStats(stored.practiceStats),
   };
+}
+
+/** 「已弹对」的段落在内容不变时不会太多；留个上限防止档案无限增长。 */
+const MAX_FOLLOWED_SEGMENTS = 200;
+
+/** 记一段「整段弹对」；同一段重复弹对不占新位置，只保留最近 MAX 条。 */
+export function markSegmentFollowed(profile: Profile, scoreId: string): Profile {
+  if (!scoreId || profile.followedSegments.includes(scoreId)) return profile;
+  return {
+    ...profile,
+    followedSegments: [...profile.followedSegments, scoreId].slice(-MAX_FOLLOWED_SEGMENTS),
+  };
+}
+
+const SKILL_STATES: readonly SkillState[] = ["locked", "learning", "passed"];
+const SKILL_HANDS: readonly SkillMastery["hand"][] = ["RH", "LH", "both", "none"];
+
+/**
+ * 校验存盘账本：只做结构检查，不检查技能 id 是否在图谱里。
+ *
+ * 未知 id 天然无害——读取方都遍历图谱再查账本，对不上的条目永远不会被匹配到。
+ * 真正要防的是坏形状（null、字符串、超范围 confidence）把界面带崩。
+ */
+function normalizeSkillLedger(value: unknown): SkillLedger {
+  if (!value || typeof value !== "object") return {};
+  const out: SkillLedger = {};
+  for (const [key, raw] of Object.entries(value as Record<string, unknown>)) {
+    if (!key.includes("@")) continue;
+    const item = raw as Partial<SkillMastery> | null;
+    if (!item || typeof item !== "object") continue;
+    const skillId = typeof item.skillId === "string" ? item.skillId : "";
+    if (!skillId) continue;
+    const state = SKILL_STATES.includes(item.state as SkillState)
+      ? (item.state as SkillState)
+      : "learning";
+    const hand = SKILL_HANDS.includes(item.hand as SkillMastery["hand"])
+      ? (item.hand as SkillMastery["hand"])
+      : "both";
+    const confidence =
+      typeof item.confidence === "number" && Number.isFinite(item.confidence)
+        ? Math.min(1, Math.max(0, item.confidence))
+        : 0;
+    out[key] = {
+      skillId,
+      hand,
+      state,
+      confidence,
+      bpm: finiteOrUndefined(item.bpm),
+      masteredAt: finiteOrUndefined(item.masteredAt),
+      lastPracticedAt: finiteOrUndefined(item.lastPracticedAt),
+    };
+  }
+  return out;
+}
+
+function finiteOrUndefined(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+function isL3PrepId(id: string): boolean {
+  return /^L3-\d+$/.test(id);
+}
+
+function normalizeStringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return uniqueStrings(value.filter((id): id is string => typeof id === "string" && id.length > 0));
+}
+
+function normalizeTheoryProgress(value: unknown, legacy: readonly string[] = []): TheoryProgress {
+  const completed = new Set<string>(legacy.filter(isL3PrepId));
+  const best: Record<string, number> = {};
+  if (value && typeof value === "object") {
+    const candidate = value as Partial<TheoryProgress>;
+    for (const id of normalizeStringArray(candidate.completed)) completed.add(id);
+    if (candidate.best && typeof candidate.best === "object") {
+      for (const [id, score] of Object.entries(candidate.best)) {
+        if (typeof score === "number" && Number.isFinite(score) && score >= 0) {
+          best[id] = score;
+        }
+      }
+    }
+  }
+  return { completed: [...completed], best };
+}
+
+function uniqueStrings(items: readonly string[]): string[] {
+  return [...new Set(items)];
+}
+
+/** 非负整数；坏数据（负数、小数、NaN、字符串）一律视为不存在。 */
+function countOrUndefined(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isInteger(value) && value >= 0 ? value : undefined;
+}
+
+/**
+ * 校验存盘练习统计：只做结构检查，不检查题型 id 是否还存在。
+ *
+ * 和技能账本一个思路——认不出的题型天然无害（读取方按当前题型查表，对不上
+ * 就不显示）。真正要防的是坏形状把界面带崩：答对数超过答数是最典型的
+ * （旧版本 bug 或手改档案），这里夹回 answered。
+ */
+function normalizePracticeStats(value: unknown): PracticeStats {
+  if (!value || typeof value !== "object") return {};
+  const out: PracticeStats = {};
+  for (const [kind, raw] of Object.entries(value as Record<string, unknown>)) {
+    if (!kind) continue;
+    const item = raw as Partial<PracticeStat> | null;
+    if (!item || typeof item !== "object") continue;
+    const answered = countOrUndefined(item.answered);
+    if (answered === undefined || answered === 0) continue;
+    const correct = Math.min(countOrUndefined(item.correct) ?? 0, answered);
+    out[kind] = { answered, correct };
+  }
+  return out;
+}
+
+/**
+ * 记一次乐理练习结果：按题型累计答数与答对数。
+ *
+ * 只写计数——一次练习答得好不构成「技能已过关」，过关始终走
+ * `recordTheoryResult`（关卡通过线）与技能账本两条既有通道。
+ */
+export function recordPracticeAnswer(
+  profile: Profile,
+  kind: string,
+  correct: boolean,
+): Profile {
+  if (!kind) return profile;
+  const current = profile.practiceStats[kind];
+  const answered = (current?.answered ?? 0) + 1;
+  const next: PracticeStat = {
+    answered,
+    correct: (current?.correct ?? 0) + (correct ? 1 : 0),
+  };
+  if (current && current.answered === next.answered && current.correct === next.correct) {
+    return profile;
+  }
+  return { ...profile, practiceStats: { ...profile.practiceStats, [kind]: next } };
+}
+
+/** 某题型的累计正确率（百分比）；没答过返回 null，界面即可不显示。 */
+export function practiceAccuracy(stats: PracticeStats, kind: string): number | null {
+  const item = stats[kind];
+  if (!item || item.answered <= 0) return null;
+  return Math.round((item.correct / item.answered) * 100);
+}
+
+/** 全部题型合计的答数/答对数，给「我的」页汇总用。 */
+export function practiceStatsTotals(stats: PracticeStats): PracticeStat {
+  let answered = 0;
+  let correct = 0;
+  for (const item of Object.values(stats)) {
+    answered += item.answered;
+    correct += item.correct;
+  }
+  return { answered, correct };
 }
 
 function normalizePracticeLog(value: unknown): PracticeEntry[] {
@@ -162,10 +371,56 @@ function normalizePracticeLog(value: unknown): PracticeEntry[] {
 
 /** 记录一节 L3 预备课完成；只写“上过”，不写技能 passed。 */
 export function completeL3PrepLesson(profile: Profile, lessonId: string): Profile {
-  if (!lessonId || profile.l3PrepCompleted.includes(lessonId)) return profile;
+  if (!lessonId) return profile;
+  const progress = normalizeTheoryProgress(profile.theoryPath, profile.l3PrepCompleted);
+  const alreadyL3 = profile.l3PrepCompleted.includes(lessonId);
+  const alreadyPath = progress.completed.includes(lessonId);
+  if (alreadyL3 && alreadyPath) return profile;
   return {
     ...profile,
-    l3PrepCompleted: [...profile.l3PrepCompleted, lessonId],
+    l3PrepCompleted: uniqueStrings([...profile.l3PrepCompleted, lessonId]),
+    theoryPath: {
+      completed: uniqueStrings([...progress.completed, ...profile.l3PrepCompleted, lessonId]),
+      best: progress.best,
+    },
+  };
+}
+
+/**
+ * 写一次乐理路径结果：最高答对数总是更新，达到通过线才标记完成。
+ *
+ * 基础十关和 L3 预备课共用这一份进度；L3 课自己的「上过课」仍由
+ * `completeL3PrepLesson` 写入，两处通过 `theoryPath.completed` 对齐。
+ */
+export function recordTheoryResult(
+  profile: Profile,
+  nodeId: string,
+  score: number,
+  passScore: number,
+): Profile {
+  if (!nodeId || !Number.isFinite(score) || score < 0) return profile;
+  const progress = normalizeTheoryProgress(profile.theoryPath, profile.l3PrepCompleted);
+  const previousBest = progress.best[nodeId] ?? 0;
+  const best = Math.max(previousBest, Math.floor(score));
+  const completed = score >= passScore
+    ? uniqueStrings([...progress.completed, nodeId])
+    : progress.completed;
+  const l3PrepCompleted = nodeId.startsWith("L3-") && completed.includes(nodeId)
+    ? uniqueStrings([...profile.l3PrepCompleted, nodeId])
+    : profile.l3PrepCompleted;
+
+  if (
+    best === previousBest
+    && completed.length === progress.completed.length
+    && l3PrepCompleted.length === profile.l3PrepCompleted.length
+  ) {
+    return profile;
+  }
+
+  return {
+    ...profile,
+    l3PrepCompleted,
+    theoryPath: { completed, best: { ...progress.best, [nodeId]: best } },
   };
 }
 

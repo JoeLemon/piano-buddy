@@ -1,4 +1,5 @@
 import type { Profile } from "../domain/profile";
+import { routeForSkill } from "../domain/skillRoutes";
 import { L3_PREP_SKILL_MAP } from "../practice/l3Lessons";
 import { SKILLS, SKILL_BY_ID, type SkillState } from "./skillGraph";
 
@@ -203,6 +204,113 @@ export function applyL3PrepCompletion(
   return next;
 }
 
+/**
+ * 记一次曲库跟弹：整段弹对才算，且只写 learning。
+ *
+ * 为什么不写 passed：把一首曲子弹下来不等于会认谱——学生可以盯着指法数字
+ * 或者靠肌肉记忆弹完一段。识谱是否过关仍由各级过关测试判定，这里只留下
+ * 「在什么速度下练过」的证据，让缺技能清单看得出练习量。
+ *
+ * 图谱里没有的技能 id 直接跳过：内容包可以声明额外技能，账本不替它们打分。
+ */
+export function recordFollowPractice(
+  ledger: SkillLedger,
+  skillIds: Iterable<string>,
+  hand: MasteryHand,
+  bpm?: number,
+  at: number = Date.now(),
+): SkillLedger {
+  let next = ledger;
+  for (const skillId of skillIds) {
+    if (!SKILL_BY_ID.has(skillId)) continue;
+    next = recordPractice(next, skillId, hand, { bpm, at, passed: false });
+  }
+  return next;
+}
+
+/** 某个技能最近一次的练习记录；没练过返回 null。左右手分开记，取最新的那条。 */
+export function practiceEvidence(ledger: SkillLedger, skillId: string): SkillMastery | null {
+  let best: SkillMastery | null = null;
+  for (const item of Object.values(ledger)) {
+    if (item.skillId !== skillId) continue;
+    if (!best || (item.lastPracticedAt ?? 0) >= (best.lastPracticedAt ?? 0)) best = item;
+  }
+  return best;
+}
+
+/**
+ * 补短板排序：档位升序（保证前置先学），同档里「练过」的排前面。
+ *
+ * 练过的技能是半熟——学生在曲子里已经能把它弹下来，只差认谱过关。先把这些
+ * 补成 passed 最快，也能让学生看见「先选曲」路径的练习确实在推进按部就班
+ * 的关卡；没碰过的技能按 id 稳定排序，不来回跳动。
+ *
+ * 注意这不改 missingSkills 的结果，只改展示顺序：补短板的集合仍由
+ * 「缺什么 + 未掌握的前置」决定。
+ */
+export function missingSkillOrder(missing: Iterable<string>, ledger: SkillLedger): string[] {
+  return [...missing].sort((a, b) => {
+    const level = (SKILL_BY_ID.get(a)?.level ?? 0) - (SKILL_BY_ID.get(b)?.level ?? 0);
+    if (level !== 0) return level;
+    const practicedA = practiceEvidence(ledger, a) ? 0 : 1;
+    const practicedB = practiceEvidence(ledger, b) ? 0 : 1;
+    if (practicedA !== practicedB) return practicedA - practicedB;
+    return a.localeCompare(b);
+  });
+}
+
+/**
+ * 补短板耗时估算：把缺口折算成「还要练多少分钟」。
+ *
+ * 粗估，回答的是「这首曲子离能弹还差多久」：按档位给每个技能一个基准分钟数
+ * （L1 5 / L2 8 / L3 12，随档位递增——越往后一课的容量越大），练过的打三折
+ * ——曲子已经能弹下来，只差认谱过关，复习一遍比从头学快。
+ *
+ * 没有微课的技能（L4+）不计入分钟：没有课就谈不上「多久补完」，界面会单独
+ * 说「暂无微课」。宁可少算，也不虚报一个到不了的承诺。
+ *
+ * 分钟数是估算，界面用「约」字开口；不作为验收承诺。
+ */
+const PRACTICE_MINUTES_BY_LEVEL: Record<number, number> = {
+  1: 5,
+  2: 8,
+  3: 12,
+  4: 15,
+  5: 18,
+  6: 20,
+};
+/** 练过但未过关的折数：复习一遍即可，不必从头学。 */
+const PRACTICED_RATIO = 0.3;
+
+export interface PracticeEstimate {
+  /** 预计分钟数（四舍五入到整分钟）。 */
+  minutes: number;
+  /** 参与估算的缺口数（有微课的那部分）。 */
+  estimated: number;
+  /** 没有微课、无法估算的缺口数。 */
+  unrouted: number;
+}
+
+export function estimatePracticeMinutes(
+  missing: Iterable<string>,
+  ledger: SkillLedger,
+): PracticeEstimate {
+  let raw = 0;
+  let estimated = 0;
+  let unrouted = 0;
+  for (const id of missing) {
+    const skill = SKILL_BY_ID.get(id);
+    if (!skill || !routeForSkill(id)) {
+      unrouted += 1;
+      continue;
+    }
+    const base = PRACTICE_MINUTES_BY_LEVEL[skill.level] ?? 10;
+    raw += practiceEvidence(ledger, id) ? base * PRACTICED_RATIO : base;
+    estimated += 1;
+  }
+  return { minutes: Math.round(raw), estimated, unrouted };
+}
+
 export function applyLevelTestPass(
   ledger: SkillLedger,
   level: number,
@@ -229,9 +337,12 @@ export function applyLevelTestPass(
 /**
  * 把 MVP 现有 Profile 迁移到账本。
  * 已过关的 L1 按左右手分别写；L2 及以后按双手写；当前在学的课只写 learning。
+ *
+ * 从档案里已存的账本出发，再把过关状态叠上去：曲库跟弹写下的练习证据
+ * （learning + bpm）因此能跨会话保留，而已过关的技能仍由关卡测试置为 passed。
  */
 export function migrateProfile(profile: Profile, at: number = Date.now()): SkillLedger {
-  let ledger: SkillLedger = {};
+  let ledger: SkillLedger = { ...(profile.skillLedger ?? {}) };
   if (profile.l1RightPassed) ledger = applyLevelTestPass(ledger, 1, "RH", at);
   if (profile.l1LeftPassed) ledger = applyLevelTestPass(ledger, 1, "LH", at);
   if (profile.l2Passed) ledger = applyLevelTestPass(ledger, 2, "both", at);

@@ -8,6 +8,7 @@
     "build": "vue-tsc --noEmit && vite build",
     "validate:content": "vite-node scripts/validate-content.ts",
     "build:catalog": "vite-node scripts/build-catalog.ts",
+    "import:musicxml": "vite-node scripts/import-musicxml.ts",
     "export:demo": "vite-node scripts/export-demo-motion.ts"
   },
   "dependencies": {

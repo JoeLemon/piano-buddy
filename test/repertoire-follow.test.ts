@@ -15,7 +15,7 @@ async function untilSelector(wrapper: { find: (selector: string) => { exists: ()
 enableAutoUnmount(afterEach);
 
 describe("App repertoire follow", () => {
-  it("opens a sliced segment in sight-reading mode and can return to the library", async () => {
+  it("starts the follow inside the library instead of leaving for sight-reading", async () => {
     await saveProfile({
       ...initialProfile(),
       assessment: { knowsTreble: true, knowsBass: true, keepsPulse: true },
@@ -34,10 +34,11 @@ describe("App repertoire follow", () => {
 
     await wrapper.get('[data-arrangement="arr.ode-to-joy.standard"]').trigger("click");
     await wrapper.get("[data-test=repertoire-follow]").trigger("click");
-    await untilSelector(wrapper, "[data-mode=sight]");
 
-    const sight = wrapper.get("[data-mode=sight]");
-    expect(sight.attributes("data-score-id")).toMatch(/\.m1-2$/);
-    expect(sight.get("[data-test=sight-remaining]").text()).toContain("跟弹本段");
+    // 就地跟弹：还留在曲库，谱子是切出来的那两小节。
+    await untilSelector(wrapper, "[data-test=score-follow]");
+    expect(wrapper.find("[data-test=repertoire]").exists()).toBe(true);
+    expect(wrapper.find("[data-mode=sight]").exists()).toBe(false);
+    expect(wrapper.get("[data-test=score-follow]").attributes("data-score-id")).toMatch(/\.m1-2/);
   });
 });

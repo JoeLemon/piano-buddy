@@ -5,6 +5,17 @@
  * 还没有实现跟弹评分。
  */
 
+/**
+ * 旋律题的基准速度。
+ *
+ * 播放示范与跟弹判定共用这一个数：听到的速度和判你弹的速度必须是同一个，
+ * 否则「跟着刚才听到的弹」这件事本身就不成立。
+ */
+export const MELODY_BPM = 80;
+
+/** 慢练档：跟弹时可切到 3/4 速，初学者先跟上再谈准确。 */
+export const MELODY_SLOW_BPM = 60;
+
 /** The four supported Playback keys. */
 export type PlaybackKey = 'G major' | 'E major' | 'G minor' | 'E minor';
 

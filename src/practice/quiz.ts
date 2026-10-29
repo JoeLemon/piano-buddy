@@ -3,10 +3,29 @@ import {
   displayName as intervalDisplayName,
 } from "./intervalCatalog";
 import { CHORD_CATALOG, type ChordType } from "./chordCatalog";
+import {
+  chordExplanation,
+  brokenChordExplanation,
+  handSpanExplanation,
+  intervalExplanation,
+  melodyExplanation,
+  noteExplanation,
+  patternExplanation,
+  progressionExplanation,
+} from "./explanation";
+import { BROKEN_CHORD_EXAMPLES, type BrokenChordExample } from "./brokenChordContent";
+import {
+  degreeLabel,
+  handSpanChoices,
+  HAND_SPAN_EXAMPLES,
+  type HandSpanExample,
+} from "./handSpanContent";
 import { MELODY_BANK } from "./melodyBank";
-import type { PlaybackQuestion } from "./melodyTypes";
+import { melodyStaff } from "./melodyPlayback";
+import type { PlaybackKey, PlaybackQuestion } from "./melodyTypes";
 import { PLAYBACK_KEYS } from "./melodyTypes";
-import { NOTE_EXAMPLES, type NoteExample } from "./noteContent";
+import { generateMelodyQuestions } from "./melodyGenerator";
+import { NOTE_EXAMPLES, noteExamplesInRange, type NoteExample } from "./noteContent";
 import { PATTERN_EXAMPLES, type PatternExample } from "./patternContent";
 import type { PracticeStaffPrompt } from "./practiceScore";
 import {
@@ -32,7 +51,9 @@ export type PracticeKind =
   | "accidentals"
   | "progressions"
   | "patterns"
-  | "melodies";
+  | "melodies"
+  | "broken"
+  | "handSpan";
 
 export const PRACTICE_KINDS: readonly PracticeKind[] = [
   "notes",
@@ -43,6 +64,8 @@ export const PRACTICE_KINDS: readonly PracticeKind[] = [
   "progressions",
   "patterns",
   "melodies",
+  "broken",
+  "handSpan",
 ];
 
 export const PRACTICE_LABELS: Record<PracticeKind, string> = {
@@ -54,12 +77,28 @@ export const PRACTICE_LABELS: Record<PracticeKind, string> = {
   progressions: "和弦进行",
   patterns: "音型",
   melodies: "旋律听辨",
+  broken: "分解和弦",
+  handSpan: "手位读谱",
 };
 
-/** 练习范围：符号可以只看某几组，和弦可以只练某几类。 */
+/**
+ * 练习范围。
+ *
+ * 所有字段都是「不传 = 全部」；数组传空也按全部处理，避免 UI 在
+ * 一个都没选时意外生成 0 道题。真正限制范围的是非空子集。
+ */
 export type PracticeOptions = {
   symbolGroups?: readonly SymbolGroup[];
   chordTypeIds?: readonly string[];
+  intervalIds?: readonly string[];
+  progressionIds?: readonly string[];
+  playbackKeys?: readonly PlaybackKey[];
+  /** 单音题音域；不传用内置 C3–E5。 */
+  noteRange?: { low: string; high: string };
+  includeSharps?: boolean;
+  includeFlats?: boolean;
+  /** 旋律题来源：静态题库或现场生成。 */
+  melodySource?: "bank" | "random";
 };
 
 export type PracticeChoice = {
@@ -76,7 +115,9 @@ export type PracticeQuestion = {
   choices: PracticeChoice[];
   answerId: string;
   explanation: string;
-  /** 单音 / 音程 / 和弦 / 音型题带谱面，练习页会画出来并允许试听。 */
+  /** 判读步骤：答完告诉学生「先看什么、再数什么」，空数组表示该题型没有步骤。 */
+  explanationSteps?: readonly string[];
+  /** 单音 / 音程 / 和弦 / 音型 / 进行题带谱面，练习页会画出来并允许试听。 */
   staff?: PracticeStaffPrompt;
   /** 只有旋律听辨题带音频数据。 */
   melody?: PlaybackQuestion;
@@ -85,21 +126,27 @@ export type PracticeQuestion = {
 export function practiceQuestionCount(kind: PracticeKind, options: PracticeOptions = {}): number {
   switch (kind) {
     case "notes":
-      return 8;
+      return Math.min(8, notePool(options).length);
     case "symbols":
       return Math.min(8, symbolPool(options).length);
     case "intervals":
-      return 8;
+      return Math.min(8, intervalPool(options).length);
     case "chords":
       return Math.min(8, chordPool(options).length);
     case "accidentals":
-      return 6;
+      return Math.min(6, ACCIDENTAL_EXAMPLES.length);
     case "progressions":
-      return PROGRESSIONS.length;
+      return Math.min(PROGRESSIONS.length, progressionPool(options).length);
     case "patterns":
-      return 8;
+      return Math.min(8, PATTERN_EXAMPLES.length);
     case "melodies":
-      return 8;
+      return options.melodySource === "random"
+        ? 8
+        : Math.min(8, melodyPool(options).length);
+    case "broken":
+      return Math.min(8, BROKEN_CHORD_EXAMPLES.length);
+    case "handSpan":
+      return Math.min(8, HAND_SPAN_EXAMPLES.length);
   }
 }
 
@@ -111,14 +158,16 @@ export function createPracticeQuestions(
   const random = mulberry32(seed);
   const count = practiceQuestionCount(kind, options);
   switch (kind) {
-    case "notes":
-      return pick(NOTE_EXAMPLES, count, random).map((item) => noteQuestion(item, random));
+    case "notes": {
+      const pool = notePool(options);
+      return pick(pool, count, random).map((item) => noteQuestion(item, pool, random));
+    }
     case "symbols":
       return pick(symbolPool(options), count, random).map((item) =>
         symbolQuestion(item, fourChoices(item.id, item.meaning, SYMBOLS, (entry) => entry.meaning, random)),
       );
     case "intervals":
-      return pick(INTERVAL_EXAMPLES, count, random).map((item) =>
+      return pick(intervalPool(options), count, random).map((item) =>
         intervalQuestion(
           item,
           fourChoices(
@@ -142,16 +191,29 @@ export function createPracticeQuestions(
         accidentalQuestion(item, shuffle([...item.choices], random)),
       );
     case "progressions":
-      return pick(PROGRESSIONS, count, random).map((item) =>
+      return pick(progressionPool(options), count, random).map((item) =>
         progressionQuestion(item, progressionChoices()),
       );
     case "patterns":
       return pick(PATTERN_EXAMPLES, count, random).map((item) =>
         patternQuestion(item, fourChoices(item.id, item.label, PATTERN_EXAMPLES, (entry) => entry.label, random)),
       );
-    case "melodies":
-      return pick(MELODY_BANK, count, random).map((item) =>
-        melodyQuestion(item, melodyChoices(random)),
+    case "melodies": {
+      const bank = options.melodySource === "random"
+        ? generateMelodyQuestions(melodyKeys(options), seed + 0x9e3779b9, count)
+        : pick(melodyPool(options), count, random);
+      return bank.map((item) => melodyQuestion(item, melodyChoices(random)));
+    }
+    case "broken":
+      return pick(BROKEN_CHORD_EXAMPLES, count, random).map((item) =>
+        brokenQuestion(
+          item,
+          fourChoices(item.typeId, item.label, CHORD_CATALOG, chordLabel, random),
+        ),
+      );
+    case "handSpan":
+      return pick(HAND_SPAN_EXAMPLES, count, random).map((item) =>
+        handSpanQuestion(item, shuffle(handSpanChoices(item.spanDegrees), random)),
       );
   }
 }
@@ -161,15 +223,21 @@ export function isPracticeAnswer(question: PracticeQuestion, choiceId: string): 
   return question.answerId === choiceId;
 }
 
-function noteQuestion(item: NoteExample, random: () => number): PracticeQuestion {
+function noteQuestion(
+  item: NoteExample,
+  pool: readonly NoteExample[],
+  random: () => number,
+): PracticeQuestion {
+  const explained = noteExplanation(item);
   return {
-    id: `note:${item.clef}:${item.pitch}`,
+    id: item.id,
     kind: "notes",
     prompt: item.pitch,
     hint: "谱面上这个音是什么？",
-    choices: fourChoices(item.pitch, item.label, NOTE_EXAMPLES, (entry) => entry.label, random),
+    choices: fourChoices(item.pitch, item.label, pool, (entry) => entry.label, random),
     answerId: item.pitch,
-    explanation: `${item.pitch} 在${item.clef === "treble" ? "高音" : "低音"}谱上。`,
+    explanation: explained.summary,
+    explanationSteps: explained.steps,
     staff: item.staff,
   };
 }
@@ -187,6 +255,7 @@ function symbolQuestion(item: SymbolEntry, choices: PracticeChoice[]): PracticeQ
 }
 
 function intervalQuestion(item: IntervalExample, choices: PracticeChoice[]): PracticeQuestion {
+  const explained = intervalExplanation(item);
   return {
     id: `interval:${item.intervalId}`,
     kind: "intervals",
@@ -194,12 +263,14 @@ function intervalQuestion(item: IntervalExample, choices: PracticeChoice[]): Pra
     hint: "这两个音构成什么音程？",
     choices,
     answerId: item.intervalId,
-    explanation: `${item.notes} 是 ${item.label}。`,
+    explanation: explained.summary,
+    explanationSteps: explained.steps,
     staff: item.staff,
   };
 }
 
 function chordQuestion(item: ChordExample, choices: PracticeChoice[]): PracticeQuestion {
+  const explained = chordExplanation(item);
   return {
     id: `chord:${item.id}`,
     kind: "chords",
@@ -207,7 +278,8 @@ function chordQuestion(item: ChordExample, choices: PracticeChoice[]): PracticeQ
     hint: `以 ${item.root} 为根音，这是什么和弦？`,
     choices,
     answerId: item.typeId,
-    explanation: `${item.notes} 是 ${item.label}。`,
+    explanation: explained.summary,
+    explanationSteps: explained.steps,
     staff: item.staff,
   };
 }
@@ -228,6 +300,7 @@ function accidentalQuestion(
 }
 
 function progressionQuestion(item: ProgressionExample, choices: PracticeChoice[]): PracticeQuestion {
+  const explained = progressionExplanation(item);
   return {
     id: `progression:${item.id}`,
     kind: "progressions",
@@ -235,11 +308,14 @@ function progressionQuestion(item: ProgressionExample, choices: PracticeChoice[]
     hint: "这组和弦的级数是什么？",
     choices,
     answerId: item.answer,
-    explanation: `${item.key} 的 ${item.chords.join(" → ")} 是 ${item.answer}。`,
+    explanation: explained.summary,
+    explanationSteps: explained.steps,
+    staff: item.staff,
   };
 }
 
 function patternQuestion(item: PatternExample, choices: PracticeChoice[]): PracticeQuestion {
+  const explained = patternExplanation(item);
   return {
     id: `pattern:${item.id}`,
     kind: "patterns",
@@ -247,12 +323,14 @@ function patternQuestion(item: PatternExample, choices: PracticeChoice[]): Pract
     hint: "这串音是往哪个方向走的？",
     choices,
     answerId: item.id,
-    explanation: `${item.notes.join(" – ")} 是${item.label}。`,
+    explanation: explained.summary,
+    explanationSteps: explained.steps,
     staff: item.staff,
   };
 }
 
 function melodyQuestion(item: PlaybackQuestion, choices: PracticeChoice[]): PracticeQuestion {
+  const explained = melodyExplanation(item);
   return {
     id: `melody:${item.id}`,
     kind: "melodies",
@@ -260,8 +338,41 @@ function melodyQuestion(item: PlaybackQuestion, choices: PracticeChoice[]): Prac
     hint: `${item.meter} · ${item.melody.length} 个音 · 先点播放`,
     choices,
     answerId: item.key,
-    explanation: `${item.id} 属于 ${KEY_LABELS[item.key]}。`,
+    explanation: explained.summary,
+    explanationSteps: explained.steps,
     melody: item,
+    // 谱面与试听同源：答完调性揭谱后，跟着同一份谱面跟弹。
+    staff: melodyStaff(item),
+  };
+}
+
+function brokenQuestion(item: BrokenChordExample, choices: PracticeChoice[]): PracticeQuestion {
+  const explained = brokenChordExplanation(item);
+  return {
+    id: `broken:${item.id}`,
+    kind: "broken",
+    prompt: item.arpeggio.join(" – "),
+    hint: "这是一个分解和弦，它是什么和弦？",
+    choices,
+    answerId: item.typeId,
+    explanation: explained.summary,
+    explanationSteps: explained.steps,
+    staff: item.staff,
+  };
+}
+
+function handSpanQuestion(item: HandSpanExample, choices: PracticeChoice[]): PracticeQuestion {
+  const explained = handSpanExplanation(item);
+  return {
+    id: `handSpan:${item.id}`,
+    kind: "handSpan",
+    prompt: item.notes,
+    hint: "这组音最两端跨了几度？",
+    choices,
+    answerId: String(item.spanDegrees),
+    explanation: explained.summary,
+    explanationSteps: explained.steps,
+    staff: item.staff,
   };
 }
 
@@ -282,6 +393,50 @@ function chordPool(options: PracticeOptions): readonly ChordExample[] {
   const types = options.chordTypeIds;
   if (!types || types.length === 0) return CHORD_EXAMPLES;
   return CHORD_EXAMPLES.filter((example) => types.includes(example.typeId));
+}
+
+/** 按音程 id 过滤例子；选项池仍是完整音程表，保证四个干扰项都成立。 */
+function intervalPool(options: PracticeOptions): readonly IntervalExample[] {
+  const ids = options.intervalIds;
+  if (!ids || ids.length === 0) return INTERVAL_EXAMPLES;
+  return INTERVAL_EXAMPLES.filter((example) => ids.includes(example.intervalId));
+}
+
+/** 按进行 id 过滤例子。 */
+function progressionPool(options: PracticeOptions): readonly ProgressionExample[] {
+  const ids = options.progressionIds;
+  if (!ids || ids.length === 0) return PROGRESSIONS;
+  return PROGRESSIONS.filter((example) => ids.includes(example.id));
+}
+
+/**
+ * 单音题库：没有音域/升降号选项时直接用内置题库；
+ * 有选项时按音域现场拼，保证范围与升降号真的生效。
+ */
+function notePool(options: PracticeOptions): readonly NoteExample[] {
+  const sharps = options.includeSharps ?? false;
+  const flats = options.includeFlats ?? false;
+  if (!options.noteRange && !sharps && !flats) return NOTE_EXAMPLES;
+  const low = options.noteRange?.low ?? "C3";
+  const high = options.noteRange?.high ?? "E5";
+  const generated = noteExamplesInRange(low, high, {
+    includeSharps: sharps,
+    includeFlats: flats,
+  });
+  return generated.length > 0 ? generated : NOTE_EXAMPLES;
+}
+
+/** 按调性过滤旋律题库；没有指定时返回全部。 */
+function melodyPool(options: PracticeOptions): readonly PlaybackQuestion[] {
+  const keys = melodyKeys(options);
+  if (keys.length === 0) return MELODY_BANK;
+  return MELODY_BANK.filter((item) => keys.includes(item.key));
+}
+
+function melodyKeys(options: PracticeOptions): PlaybackKey[] {
+  const keys = options.playbackKeys;
+  if (!keys || keys.length === 0) return [...PLAYBACK_KEYS];
+  return [...keys];
 }
 
 type WithId = { id: string };

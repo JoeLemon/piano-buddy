@@ -1,4 +1,5 @@
 import { pitchLabel, pitchToMidi } from "./pitch";
+import { sameMidis, tiesFrom, tiesTo } from "./tie";
 import type { Hand, NoteEvent, Score } from "./types";
 import { DURATION_BEATS } from "./vocabulary";
 
@@ -17,6 +18,14 @@ export type ScoreEvent = {
   labels: string[];
   fingers: (number | null)[];
   duration: NoteEvent["duration"];
+  /**
+   * 实际要按住的拍数。
+   *
+   * 平时等于 `duration` 查表的结果；带连音线时会把后续段并进来，比谱面上
+   * 单个音符长。判定音长一律读这个字段，别再拿 `duration` 查表——否则
+   * 跨小节的延音会被判成「按得太短」。
+   */
+  beats: number;
 };
 
 const HANDS: readonly Hand[] = ["RH", "LH"];
@@ -30,22 +39,38 @@ export function scoreEvents(score: Score, hand?: Hand | "BOTH"): ScoreEvent[] {
   for (const current of hands) {
     const measures = score.staves[current]?.measures ?? [];
     let beat = 0;
+    /**
+     * 当前还开着口的连音线起点。带着 `start`/`continue` 的音会把这条线留给
+     * 下一个音；遇到任何不带 tie 的音就自动闭合，所以「stop 必须紧邻」这条
+     * 记谱约束在这里是天然的。
+     */
+    let open: { event: ScoreEvent; midis: number[] } | null = null;
     for (const measure of measures) {
       for (const note of measure.notes) {
         if (!isRest(note)) {
-          const pitches = [...note.pitches].sort(
-            (a, b) => pitchToMidi(a) - pitchToMidi(b),
-          );
-          events.push({
-            id: note.id,
-            hand: current,
-            beat,
-            midis: pitches.map((pitch) => pitchToMidi(pitch)),
-            // labels/fingers 保持谱面书写顺序，键盘提示按书写顺序显示。
-            labels: note.pitches.map((pitch) => pitchLabel(pitch)),
-            fingers: note.pitches.map((_, index) => note.fingers?.[index] ?? null),
-            duration: note.duration,
-          });
+          const noteMidis = note.pitches.map((pitch) => pitchToMidi(pitch));
+          if (tiesFrom(note) && open && sameMidis(open.midis, noteMidis)) {
+            // 承接前音：不产生新的按键，只把时值接上去。
+            open.event.beats += DURATION_BEATS[note.duration];
+            if (!tiesTo(note)) open = null;
+          } else {
+            const pitches = [...note.pitches].sort(
+              (a, b) => pitchToMidi(a) - pitchToMidi(b),
+            );
+            const event: ScoreEvent = {
+              id: note.id,
+              hand: current,
+              beat,
+              midis: pitches.map((pitch) => pitchToMidi(pitch)),
+              // labels/fingers 保持谱面书写顺序，键盘提示按书写顺序显示。
+              labels: note.pitches.map((pitch) => pitchLabel(pitch)),
+              fingers: note.pitches.map((_, index) => note.fingers?.[index] ?? null),
+              duration: note.duration,
+              beats: DURATION_BEATS[note.duration],
+            };
+            events.push(event);
+            open = tiesTo(note) ? { event, midis: event.midis } : null;
+          }
         }
         beat += DURATION_BEATS[note.duration];
       }

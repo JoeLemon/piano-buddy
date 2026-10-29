@@ -96,17 +96,17 @@ describe("flattenScore", () => {
     };
 
     expect(flattenScore(score)).toEqual([
-      { id: "lh-c3", midi: 48, beat: 0, hand: "LH", label: "C3", finger: null },
-      { id: "rh-c4", midi: 60, beat: 1, hand: "RH", label: "C4", finger: null },
-      { id: "rh-d4", midi: 62, beat: 2, hand: "RH", label: "D4", finger: null },
-      { id: "lh-e3", midi: 52, beat: 2, hand: "LH", label: "E3", finger: null },
+      { id: "lh-c3", midi: 48, beat: 0, beats: 1, hand: "LH", label: "C3", finger: null },
+      { id: "rh-c4", midi: 60, beat: 1, beats: 1, hand: "RH", label: "C4", finger: null },
+      { id: "rh-d4", midi: 62, beat: 2, beats: 1, hand: "RH", label: "D4", finger: null },
+      { id: "lh-e3", midi: 52, beat: 2, beats: 1, hand: "LH", label: "E3", finger: null },
     ]);
   });
 
   it("puts the right hand before the left hand on the same beat", () => {
     expect(flattenScore(togetherQuarters())).toEqual([
-      { id: "rh-c4", midi: 60, beat: 0, hand: "RH", label: "C4", finger: null },
-      { id: "lh-c3", midi: 48, beat: 0, hand: "LH", label: "C3", finger: null },
+      { id: "rh-c4", midi: 60, beat: 0, beats: 1, hand: "RH", label: "C4", finger: null },
+      { id: "lh-c3", midi: 48, beat: 0, beats: 1, hand: "LH", label: "C3", finger: null },
     ]);
   });
 });

@@ -60,6 +60,9 @@ for (const dir of packageDirs(root)) {
   }
 
   const manifest = manifestResult.manifest!;
+  for (const warning of manifestResult.warnings) {
+    console.warn(`! ${manifest.id}：${warning}`);
+  }
   if (manifest.type !== "song") {
     skipped += 1;
     continue;
@@ -104,6 +107,7 @@ if (errors.length > 0) {
   process.exitCode = 1;
 } else {
   const result = buildCatalog(sources);
+  for (const warning of result.warnings) console.warn(`! ${warning}`);
   if (!result.ok || !result.catalog) {
     console.error("生成 catalog 失败：");
     for (const error of result.errors) console.error(error);

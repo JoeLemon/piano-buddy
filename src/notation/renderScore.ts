@@ -1,7 +1,8 @@
 import { Factory, Renderer, Voice, type StemmableNote } from "vexflow";
 import { pitchToMidi } from "../domain/pitch";
-import type { Clef, Duration, Hand, KeySignature, Measure, NoteEvent, Score, Step } from "../domain/types";
-import { keyAlteration } from "../domain/vocabulary";
+import { samePitches, tiesFrom, tiesTo } from "../domain/tie";
+import type { Clef, Duration, Hand, KeySignature, Measure, NoteEvent, Pitch, Score, Step } from "../domain/types";
+import { DURATION_BEATS, keyAlteration } from "../domain/vocabulary";
 
 const WHITE_STEPS: readonly Step[] = ["C", "D", "E", "F", "G", "A", "B"];
 const BLACK_STEPS: readonly Step[] = ["C", "D", "F", "G", "A"];
@@ -27,6 +28,30 @@ function naturalWidth(measureCount: number, gap: number): number {
   const first = 360;
   const rest = (measureCount - 1) * 240;
   return 20 + first + rest + gap * (measureCount - 1);
+}
+
+/** 补足拍数用的休止符时值（四分音符单位），从大到小贪心分解。 */
+const REST_FILL: readonly { duration: Duration; beats: number }[] = [
+  { duration: "wr", beats: 4 },
+  { duration: "hd", beats: 3 },
+  { duration: "h", beats: 2 },
+  { duration: "qd", beats: 1.5 },
+  { duration: "q", beats: 1 },
+  { duration: "8r", beats: 0.5 },
+  { duration: "16r", beats: 0.25 },
+];
+
+/** 把不满一小节的剩余拍数拆成若干个休止符；不足十六分之一的余量忽略。 */
+function restTokensFor(remaining: number, clef: Clef): string[] {
+  const tokens: string[] = [];
+  let left = Math.round(remaining * 100) / 100;
+  for (const fill of REST_FILL) {
+    while (left >= fill.beats - 0.001) {
+      tokens.push(`${restPitch(clef)}/${VEX_DURATION[fill.duration]}`);
+      left = Math.round((left - fill.beats) * 100) / 100;
+    }
+  }
+  return tokens;
 }
 
 /**
@@ -98,20 +123,42 @@ export function renderScore(element: HTMLElement, score: Score, hand: Hand, show
   const easy = factory.EasyScore();
   easy.set({ clef: stave.clef, time });
 
+  // 一小节的拍数预算（四分音符单位）：4/4 = 4，3/4 = 3，6/8 = 3。
+  const beatQuarters = 4 / score.meter.beatValue;
+  const budget = score.meter.beats * beatQuarters;
+
+  const rendered: (StemmableNote[] | undefined)[] = [];
   stave.measures.forEach((measure, index) => {
-    const line = measureTokens(measure, stave.clef, score.keySignature).join(", ");
+    const tokens = measureTokens(measure, stave.clef, score.keySignature);
+    // VexFlow 的 voice 默认 STRICT：拍数不满一小节就抛 IncompleteVoice。
+    // 练习谱面常有 3 个四分音符（音型、分解和弦、手位读谱），按记谱惯例
+    // 在末尾补休止符——顺带修掉音型题三音组一直渲染不出来的老问题。
+    const used = measure.notes.reduce(
+      (sum, note) => sum + (DURATION_BEATS[note.duration] ?? 0),
+      0,
+    );
+    if (used > 0 && used < budget) {
+      const rests = restTokensFor(budget - used, stave.clef);
+      // 弱起小节的缺口在**开头**：把休止符补在前面，音符就落在小节末的拍点上，
+      // 和跟弹时钟听到的位置一致。补在后面会把它画成「第一拍起音」。
+      if (index === 0 && score.pickup !== undefined) tokens.unshift(...rests);
+      else tokens.push(...rests);
+    }
+    const line = tokens.join(", ");
     if (!line) return;
     const notes = easy.notes(line, { clef: stave.clef });
+    rendered[index] = notes;
     if (showFingers) addFingers(factory, notes, measure);
     const voice = easy.voice(notes, { time });
     const placement = placements[index];
     const system = factory.System({ x: placement.x, y: 90, width: placement.width });
-    const rendered = system.addStave({ voices: [voice] });
+    const renderedStave = system.addStave({ voices: [voice] });
     if (index === 0) {
-      rendered.addClef(stave.clef).addTimeSignature(time).addKeySignature(score.keySignature);
+      renderedStave.addClef(stave.clef).addTimeSignature(time).addKeySignature(score.keySignature);
     }
   });
 
+  drawStaveTies(factory, stave.measures, rendered);
   factory.draw();
   styleFingerAnnotations(host);
   trimCanvas(host);
@@ -136,11 +183,17 @@ export function renderGrandScore(element: HTMLElement, score: Score, showFingers
   element.append(host);
 
   const gap = 12;
-  const natural = naturalWidth(measureCount, gap);
+  // 弱起小节按拍数比例缩窄：不缩的话它和整小节一样宽、内容却少一截，
+  // 看上去像「漏了音」而不是「从后面进来」。
+  // 公式 = 谱号/调号/拍号固定占位 120 + 每拍 60；满拍时正好回到 360。
+  const firstWidth = score.pickup
+    ? Math.max(150, Math.round(120 + 240 * (score.pickup / score.meter.beats)))
+    : 360;
+  const natural = naturalWidth(measureCount, gap) - (360 - firstWidth);
   const scale = fitScale(element, natural);
   let cursor = 28;
   const placements = Array.from({ length: measureCount }, (_, index) => {
-    const width = (index === 0 ? 360 : 240) * scale;
+    const width = (index === 0 ? firstWidth : 240) * scale;
     const placement = { x: cursor, width };
     cursor += width + gap * scale;
     return placement;
@@ -157,6 +210,8 @@ export function renderGrandScore(element: HTMLElement, score: Score, showFingers
   const easy = factory.EasyScore();
   easy.set({ time });
 
+  const rightRendered: (StemmableNote[] | undefined)[] = [];
+  const leftRendered: (StemmableNote[] | undefined)[] = [];
   for (let index = 0; index < measureCount; index += 1) {
     const rightMeasure = right.measures[index];
     const leftMeasure = left.measures[index];
@@ -166,6 +221,8 @@ export function renderGrandScore(element: HTMLElement, score: Score, showFingers
 
     const rightNotes = easy.notes(rightLine, { clef: right.clef });
     const leftNotes = easy.notes(leftLine, { clef: left.clef });
+    rightRendered[index] = rightNotes;
+    leftRendered[index] = leftNotes;
     if (showFingers) {
       addFingers(factory, rightNotes, rightMeasure);
       addFingers(factory, leftNotes, leftMeasure);
@@ -189,9 +246,93 @@ export function renderGrandScore(element: HTMLElement, score: Score, showFingers
     }
   }
 
+  drawStaveTies(factory, right.measures, rightRendered);
+  drawStaveTies(factory, left.measures, leftRendered);
   factory.draw();
   styleFingerAnnotations(host);
   trimCanvas(host);
+}
+
+/**
+ * 画连音线。
+ *
+ * 每个小节是一个独立的 `System`，但它们横向排在同一行上，所以「跨小节」
+ * 不等于「换行」——一条完整的曲线就能跨过小节间隙，比拆成两段更连贯。
+ *
+ * 这个渲染器**不换行**：宽度不够时整体缩放、再不够就横向滚动（见 `fitScale`），
+ * 所以目标音永远在起音右边。哪天改成多行排版，这里要按「目标是否跑到下一行」
+ * 拆成两条半截线（`StaveTie` 的 `from` 或 `to` 传 null）。
+ *
+ * 找不到接续音时什么都不画：`isAllowed` 会把这种谱面判为不合法，渲染层
+ * 不必再抛错，能把剩下的内容画出来反而更好排查。
+ */
+function drawStaveTies(
+  factory: Factory,
+  measures: readonly Measure[],
+  rendered: readonly (StemmableNote[] | undefined)[],
+): void {
+  measures.forEach((measure, measureIndex) => {
+    const notes = rendered[measureIndex];
+    if (!notes) return;
+    measure.notes.forEach((note, noteIndex) => {
+      if (!tiesTo(note)) return;
+      const from = notes[noteIndex];
+      if (!from) return;
+      const target = nextTieTarget(measures, measureIndex, noteIndex, note.pitches);
+      if (!target) return;
+      const to = rendered[target.measure]?.[target.index];
+      if (!to) return;
+      const indices = tieIndices(note.pitches, target.pitches);
+      if (!indices) return;
+      factory.StaveTie({
+        from,
+        to,
+        first_indices: indices.first,
+        last_indices: indices.last,
+      });
+    });
+  });
+}
+
+/** 连音线的另一端：往后第一个发声的音，且必须真的是这根线的接续。 */
+function nextTieTarget(
+  measures: readonly Measure[],
+  measureIndex: number,
+  noteIndex: number,
+  pitches: readonly Pitch[],
+): { measure: number; index: number; pitches: Pitch[] } | null {
+  for (let m = measureIndex; m < measures.length; m += 1) {
+    const start = m === measureIndex ? noteIndex + 1 : 0;
+    for (let i = start; i < measures[m].notes.length; i += 1) {
+      const candidate = measures[m].notes[i];
+      if (candidate.pitches.length === 0 || candidate.duration.endsWith("r")) continue;
+      // 中间隔了别的音就不再是同一根线，别硬连到后面去。
+      if (!tiesFrom(candidate) || !samePitches(pitches, candidate.pitches)) return null;
+      return { measure: m, index: i, pitches: candidate.pitches };
+    }
+  }
+  return null;
+}
+
+/** 和弦连音线要逐音配对：两端各给一组下标，缺一个音就不显示。 */
+function tieIndices(
+  from: readonly Pitch[],
+  to: readonly Pitch[],
+): { first: number[]; last: number[] } | null {
+  const first: number[] = [];
+  const last: number[] = [];
+  from.forEach((pitch, index) => {
+    const match = to.findIndex(
+      (other) =>
+        other.step === pitch.step &&
+        other.octave === pitch.octave &&
+        other.alteration === pitch.alteration,
+    );
+    if (match < 0) return;
+    first.push(index);
+    last.push(match);
+  });
+  return first.length > 0 ? { first, last } : null;
 }
 
 function openVoice(factory: Factory, notes: StemmableNote[], time: string) {

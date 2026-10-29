@@ -1,9 +1,15 @@
+import { isHeldEnough } from "./hold";
 import { scoreBeats } from "./scoreBeats";
 import { scoreEvents } from "./scoreEvents";
 import { flattenScore, type TimelineNote } from "./timeline";
 import type { Hand, Level, Score } from "./types";
 
-export type PlayedNote = { midi: number; timeMs: number };
+export type PlayedNote = {
+  midi: number;
+  timeMs: number;
+  /** 抬手时刻（与 timeMs 同一时间基准）；没收到 note-off 时省略。 */
+  offMs?: number;
+};
 
 export type CompareResult = {
   pitchErrors: number;
@@ -11,6 +17,14 @@ export type CompareResult = {
   firstWrongLabel: string | null;
   wrongPitchNoteIds: string[];
   lateNoteIds: string[];
+  /**
+   * 按住不足目标时值六成的音。
+   *
+   * 只观察、不计错：连音与保持音的口径在教材里不一，拿它判对错会误伤正确
+   * 的演奏（与曲库跟弹同一把尺，见 `domain/hold.ts`）。初学者最普遍的毛病
+   * ——全音符弹成四分音符——用复盘里一句话点出来就够了。
+   */
+  shortNoteIds: string[];
 };
 
 const PASS_LIMIT: Partial<Record<Level, number>> = { 1: 2, 2: 2, 3: 3 };
@@ -47,6 +61,8 @@ function scoreNotes(
   let firstWrongLabel: string | null = null;
   const wrongPitchNoteIds: string[] = [];
   const lateNoteIds: string[] = [];
+  const shortNoteIds: string[] = [];
+  const msPerBeat = 60000 / bpm;
 
   for (const note of notes) {
     const hit = played[cursor];
@@ -55,6 +71,9 @@ function scoreNotes(
       pitchErrors += 1;
       wrongPitchNoteIds.push(note.id);
       if (firstWrongLabel === null) firstWrongLabel = note.label;
+    } else if (hit.offMs != null && !isHeldEnough((hit.offMs - hit.timeMs) / msPerBeat, note.beats)) {
+      // 弹对了音才谈得上按住多久；弹错的音时长说明不了任何事。
+      shortNoteIds.push(note.id);
     }
     if (hit && hit.timeMs / (60000 / bpm) - note.beat > 2) {
       rhythmBreaks += 1;
@@ -62,7 +81,7 @@ function scoreNotes(
     }
   }
 
-  return { pitchErrors, rhythmBreaks, firstWrongLabel, wrongPitchNoteIds, lateNoteIds };
+  return { pitchErrors, rhythmBreaks, firstWrongLabel, wrongPitchNoteIds, lateNoteIds, shortNoteIds };
 }
 
 /**
@@ -83,6 +102,8 @@ function compareEvents(
   let firstWrongLabel: string | null = null;
   const wrongPitchNoteIds: string[] = [];
   const lateNoteIds: string[] = [];
+  const shortNoteIds: string[] = [];
+  const msPerBeat = 60000 / bpm;
 
   beats.forEach((beat, index) => {
     const group = groups[index];
@@ -94,6 +115,20 @@ function compareEvents(
         firstWrongLabel = beat.events.flatMap((event) => event.labels).join("+");
       }
     }
+    // 音长逐个音判：同一拍上左右手时值经常不同，不能拿最长的那个要求所有音。
+    // 只在这一组按对了之后判——按错的音，抬手早晚说明不了任何事；和弦里漏掉
+    // 的音没有抬手时刻，自然跳过。同一事件只记一次，不按音符数重复计。
+    if (ok && group) {
+      for (const event of beat.events) {
+        const target = event.beats;
+        const short = event.midis.some((midi) => {
+          const hit = group.find((note) => note.midi === midi);
+          if (!hit || hit.offMs == null) return false;
+          return !isHeldEnough((hit.offMs - hit.timeMs) / msPerBeat, target);
+        });
+        if (short) shortNoteIds.push(event.id);
+      }
+    }
     const firstTime = group?.[0]?.timeMs;
     if (firstTime !== undefined && firstTime / (60000 / bpm) - beat.beat > 2) {
       rhythmBreaks += 1;
@@ -101,7 +136,7 @@ function compareEvents(
     }
   });
 
-  return { pitchErrors, rhythmBreaks, firstWrongLabel, wrongPitchNoteIds, lateNoteIds };
+  return { pitchErrors, rhythmBreaks, firstWrongLabel, wrongPitchNoteIds, lateNoteIds, shortNoteIds };
 }
 
 function groupPlayed(played: PlayedNote[]): PlayedNote[][] {

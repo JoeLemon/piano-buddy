@@ -1,0 +1,37 @@
+{
+  "schemaVersion": 1,
+  "id": "pkg.morning-song.full",
+  "songId": "song.morning-song",
+  "arrangementId": "arr.morning-song.flow",
+  "songTitle": "晨歌",
+  "composer": "Piano Buddy",
+  "name": "晨歌 · L5 编配",
+  "type": "song",
+  "version": "1.0.0",
+  "minAppVersion": "2.0.0",
+  "skillDeps": [
+    "chord.progression",
+    "chord.triad",
+    "clef.bass",
+    "clef.treble",
+    "hands.both",
+    "hands.together",
+    "key.c",
+    "pos.expand",
+    "pos.five",
+    "pos.shift",
+    "rhythm.dotted"
+  ],
+  "difficulty": {
+    "level": 5,
+    "bpm": 60,
+    "repeat": 0.3,
+    "len": 8
+  },
+  "assets": ["content/score.json"],
+  "license": "original",
+  "rights": {
+    "type": "original",
+    "attribution": "Piano Buddy 教学编配（原创，含弱起小节与跨小节延音）"
+  }
+}

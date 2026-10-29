@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { generateL1 } from "../src/domain/generate";
 import { generateL2 } from "../src/domain/generateL2";
@@ -16,6 +17,7 @@ import {
 } from "../src/repertoire/skillGraph";
 import { rateScore } from "../src/repertoire/difficulty";
 import {
+  checksumPayload,
   isSafeAssetPath,
   loadPackage,
   memorySource,
@@ -26,9 +28,13 @@ import {
 import {
   applyLessonCompletion,
   applyLevelTestPass,
+  estimatePracticeMinutes,
   isMastered,
   masteredSkillIds,
   migrateProfile,
+  missingSkillOrder,
+  practiceEvidence,
+  recordFollowPractice,
   recordPractice,
   skillKey,
 } from "../src/repertoire/skillState";
@@ -295,15 +301,19 @@ describe("数据包 schema 与加载", () => {
   });
 
   it("loadPackage 从内存源加载并读取资源", async () => {
+    const scoreAsset = '{"score":"here"}';
+    // good 里的 checksum 只是格式占位；真算哈希时得换成匹配资源的值。
+    const payload = checksumPayload(["score.json"], { "score.json": scoreAsset });
+    const digest = createHash("sha256").update(payload, "utf8").digest("hex");
     const source = memorySource({
-      "manifest.json": JSON.stringify(good),
-      "score.json": '{"score":"here"}',
+      "manifest.json": JSON.stringify({ ...good, checksum: `sha256:${digest}` }),
+      "score.json": scoreAsset,
     });
     const r = await loadPackage(source, known);
     expect(r.ok).toBe(true);
     if (r.ok) {
       expect(r.pkg.manifest.id).toBe("song.xiaoxingyun.l3");
-      expect(r.pkg.files["score.json"]).toBe('{"score":"here"}');
+      expect(r.pkg.files["score.json"]).toBe(scoreAsset);
     }
   });
 
@@ -581,6 +591,113 @@ describe("技能掌握状态账本", () => {
     expect(isMastered(ledger, "clef.bass")).toBe(false);
     expect(isMastered(ledger, "pos.five", "RH")).toBe(true);
     expect(isMastered(ledger, "pos.five", "both")).toBe(false);
+  });
+
+  it("跟弹弹对只记练习与速度，不写 passed", () => {
+    const ledger = recordFollowPractice({}, ["clef.treble", "pos.five"], "RH", 92, 5);
+    expect(ledger[skillKey("clef.treble", "RH")].state).toBe("learning");
+    expect(ledger[skillKey("clef.treble", "RH")].bpm).toBe(92);
+    expect(ledger[skillKey("clef.treble", "RH")].lastPracticedAt).toBe(5);
+    // 图谱里没有的技能 id 不该被记进账本。
+    expect(recordFollowPractice({}, ["skill.from.nowhere"], "both", 60, 5)).toEqual({});
+    // 弹得再好也不替代识谱过关。
+    expect(isMastered(recordFollowPractice({}, ["clef.treble"], "RH", 120, 5), "clef.treble", "RH")).toBe(false);
+  });
+
+  it("迁移时保留跟弹写下的练习证据，并让过关测试覆盖它", () => {
+    const practiced = recordFollowPractice({}, ["pos.five"], "RH", 88, 1);
+    const profile = { ...initialProfile(), skillLedger: practiced };
+
+    const beforeTest = migrateProfile(profile, 2);
+    expect(beforeTest[skillKey("pos.five", "RH")].state).toBe("learning");
+    expect(beforeTest[skillKey("pos.five", "RH")].bpm).toBe(88);
+
+    const afterTest = migrateProfile({ ...profile, l1RightPassed: true }, 3);
+    expect(afterTest[skillKey("pos.five", "RH")].state).toBe("passed");
+    expect(afterTest[skillKey("pos.five", "RH")].bpm).toBe(88);
+  });
+
+  it("练习证据取左右手里最近的一条", () => {
+    let ledger = recordFollowPractice({}, ["pos.five"], "RH", 72, 1);
+    ledger = recordFollowPractice(ledger, ["pos.five"], "LH", 96, 2);
+    const evidence = practiceEvidence(ledger, "pos.five");
+    expect(evidence?.hand).toBe("LH");
+    expect(evidence?.bpm).toBe(96);
+    expect(practiceEvidence(ledger, "chord.triad")).toBeNull();
+  });
+
+  it("补短板排序：档位优先，同档里练过的排前", () => {
+    // L1 三个缺口：pos.five 练过，clef.treble / rhythm.quarter 没碰过。
+    let ledger = recordFollowPractice({}, ["pos.five"], "RH", 88, 1);
+    const ordered = missingSkillOrder(
+      ["clef.treble", "rhythm.quarter", "pos.five", "key.one-flat"],
+      ledger,
+    );
+    // key.one-flat 是 L2，哪怕没练过也排在所有 L1 后面（前置先学）。
+    expect(ordered).toEqual(["pos.five", "clef.treble", "rhythm.quarter", "key.one-flat"]);
+
+    // 同档两个都没练过时按 id 稳定排序，不来回跳动。
+    expect(missingSkillOrder(["rhythm.quarter", "clef.treble"], {})).toEqual([
+      "clef.treble",
+      "rhythm.quarter",
+    ]);
+  });
+
+  it("补短板排序不改变缺口集合，只改顺序", () => {
+    const ledger = recordFollowPractice({}, ["pos.five"], "RH", 88, 1);
+    const required = ["pos.five", "clef.treble", "key.one-flat"];
+    const missing = missingSkills(required, masteredSkillIds(migrateProfile({ ...initialProfile(), skillLedger: ledger }, 1)));
+    const ordered = missingSkillOrder(missing, ledger);
+    expect([...ordered].sort()).toEqual([...missing].sort());
+  });
+
+  it("耗时估算：没有缺口就是 0 分钟", () => {
+    expect(estimatePracticeMinutes([], {})).toEqual({ minutes: 0, estimated: 0, unrouted: 0 });
+  });
+
+  it("耗时估算：按档位折算，练过的打三折", () => {
+    // 没练过：L1 的 key.c 5 分钟 + L2 的 rhythm.eighth 8 分钟。
+    expect(estimatePracticeMinutes(["key.c", "rhythm.eighth"], {})).toEqual({
+      minutes: 13,
+      estimated: 2,
+      unrouted: 0,
+    });
+    // key.c 练过：5 × 0.3 + 8 = 9.5，四舍五入到 10。
+    const ledger = recordFollowPractice({}, ["key.c"], "both", 72, 1);
+    expect(estimatePracticeMinutes(["key.c", "rhythm.eighth"], ledger)).toEqual({
+      minutes: 10,
+      estimated: 2,
+      unrouted: 0,
+    });
+  });
+
+  it("耗时估算：没有微课的缺口不计入分钟，只计数", () => {
+    // pedal.sustain 是 L4 技能，routeForSkill 没有入口。
+    expect(estimatePracticeMinutes(["pedal.sustain"], {})).toEqual({
+      minutes: 0,
+      estimated: 0,
+      unrouted: 1,
+    });
+    // 混合：只估有课的那部分，不虚报。
+    expect(estimatePracticeMinutes(["key.c", "pedal.sustain", "不存在的技能"], {})).toEqual({
+      minutes: 5,
+      estimated: 1,
+      unrouted: 2,
+    });
+  });
+
+  it("耗时估算：L4 预备关让分解和弦与手位扩张计入分钟", () => {
+    // texture.broken / pos.expand 有 L4 预备关（stage 路由），按 L4 基准 15 分钟。
+    expect(estimatePracticeMinutes(["texture.broken"], {})).toEqual({
+      minutes: 15,
+      estimated: 1,
+      unrouted: 0,
+    });
+    expect(estimatePracticeMinutes(["texture.broken", "pos.expand"], {})).toEqual({
+      minutes: 30,
+      estimated: 2,
+      unrouted: 0,
+    });
   });
 });
 

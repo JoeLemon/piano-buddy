@@ -2,8 +2,9 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { audioAvailable, createPreviewPlayer, type PreviewPlayer } from "../audio/preview";
 import type { LessonId, Profile } from "../domain/profile";
+import { markSegmentFollowed } from "../domain/profile";
 import { routeForSkill, type SkillRoute } from "../domain/skillRoutes";
-import { scoreSegments, sliceScore } from "../domain/sliceScore";
+import { scoreSegments, segmentBeatRange, sliceScore } from "../domain/sliceScore";
 import { flattenScore } from "../domain/timeline";
 import type { Hand, Score } from "../domain/types";
 import { flatRows, paintGrandProgress, paintScoreProgress } from "../notation/scorePaint";
@@ -11,15 +12,22 @@ import { renderGrandScore, renderScore } from "../notation/renderScore";
 import { L3_PREP_LESSONS } from "../practice";
 import {
   SKILL_BY_ID,
+  estimatePracticeMinutes,
   masteredSkillIds,
   migrateProfile,
+  missingSkillOrder,
   missingSkills,
+  practiceEvidence,
   rateScore,
+  recordFollowPractice,
+  requiredSkillsForScore,
   type Catalog,
   type CatalogArrangement,
   type DifficultyVector,
   type Skill,
+  type SkillMastery,
 } from "../repertoire";
+import ScoreFollow from "./ScoreFollow.vue";
 
 /** 内容用 ?raw 读入，避免依赖 JSON import 的构建配置。 */
 import catalogRaw from "../../content/catalog.json?raw";
@@ -43,7 +51,9 @@ const emit = defineEmits<{
   "open-reading": [];
   "open-lesson": [lessonId: LessonId];
   "open-theory": [lessonId: string];
-  "follow-score": [payload: { score: Score; hand: Hand | "BOTH"; title: string }];
+  /** L4 预备关在乐理练习页里，带关卡 id 直达。 */
+  "open-stage": [stageId: string];
+  "update-profile": [profile: Profile];
 }>();
 
 const catalog = parseCatalog(catalogRaw);
@@ -90,26 +100,137 @@ const requiredSkills = computed(() => {
     .map((id) => ({ ...skillInfo(id), done: mastered.value.has(id) }))
     .sort((a, b) => a.level - b.level || a.id.localeCompare(b.id));
 });
+/**
+ * 补短板顺序：先档位（前置先学），同档里「练过」的排前——半熟的技能补成
+ * 过关最快，也让学生看见曲库里的练习确实在推进关卡。
+ */
 const missing = computed(() => {
   const arrangement = selected.value?.arrangement;
   if (!arrangement) return [];
-  return [...missingSkills(arrangement.skillDeps, mastered.value)]
-    .map((id) => skillInfo(id))
-    .sort((a, b) => a.level - b.level || a.id.localeCompare(b.id));
+  return missingSkillOrder(missingSkills(arrangement.skillDeps, mastered.value), ledger.value).map(
+    (id) => skillInfo(id),
+  );
 });
-const readiness = computed(() =>
-  missing.value.length === 0 ? "所需技能已齐，可以开始。" : `还差 ${missing.value.length} 项技能。`,
+/** 练过的缺口：曲目里已经能弹下来，只差认谱过关的那几项。 */
+const practicedMissing = computed(
+  () => missing.value.filter((skill) => evidence.value.has(skill.id)).length,
 );
+/**
+ * 补完耗时：把缺口折算成分钟，回答「这首曲子离能弹还差多久」。
+ * 没有微课的缺口不计入——界面已经用「暂无微课」说过一次，不重复。
+ */
+const estimate = computed(() =>
+  estimatePracticeMinutes(
+    missing.value.map((skill) => skill.id),
+    ledger.value,
+  ),
+);
+const estimateText = computed(() => {
+  if (estimate.value.estimated === 0) return "";
+  return estimate.value.unrouted > 0
+    ? `有微课的部分，预计约 ${estimate.value.minutes} 分钟。`
+    : `按这个顺序补，预计约 ${estimate.value.minutes} 分钟。`;
+});
+const readiness = computed(() => {
+  if (missing.value.length === 0) return "所需技能已齐，可以开始。";
+  const base = `还差 ${missing.value.length} 项技能`;
+  return practicedMissing.value > 0
+    ? `${base}，其中 ${practicedMissing.value} 项已经练过。`
+    : `${base}。`;
+});
 /** 分段跟弹：两小节一段，避免一上来就是整首。 */
 const segments = computed(() => (selectedScore.value ? scoreSegments(selectedScore.value) : []));
 const selectedSegment = ref(0);
 const activeSegment = computed(() => segments.value[selectedSegment.value] ?? segments.value[0] ?? null);
+
+/**
+ * 就地跟弹：切出这一段交给 ScoreFollow，练完还留在曲库。
+ *
+ * 以前这里跳去视奏页，回来时段落选择就没了，一段一段往下练会反复重选；
+ * 而且视奏页的口径是「弹错也不要停」，跟「把这两小节练熟」不是一回事。
+ */
+const following = ref(false);
+/** A–B 循环：示范播放只在当前分段里反复，听完一遍自动重播。 */
+const loop = ref(false);
+const followScore = computed(() => {
+  const score = selectedScore.value;
+  const segment = activeSegment.value;
+  if (!score || !segment) return null;
+  return sliceScore(score, segment.start, segment.end, hand.value);
+});
+/** 跟弹沿用示范的速度档：同一个「速度」只管一处，不再多一个滑块。 */
+const followBpm = computed(() => Math.round((selectedScore.value?.bpm ?? 60) * speed.value));
+
+function toggleFollow() {
+  // 示范播放与跟弹不共用一条时间线；换谱子后由 staffScore 的 watch 重建播放器。
+  stopPlayback();
+  following.value = !following.value;
+}
+
+/**
+ * A–B 循环：把循环区交给示范播放器，听完一遍自动重播。
+ *
+ * 不跟弹时循环区是当前分段（小节坐标转成的拍坐标，`segmentBeatRange`）；
+ * 跟弹时播放器谱面就是这一段，循环整个播放区即可——「循环本段」在两种
+ * 状态下是同一件事。换分段、换手、换编配都会让谱长或区间变化，重新设
+ * 一次，不信任旧状态。
+ */
+function applyLoop() {
+  const active = ensurePlayer();
+  if (!active) return;
+  if (!loop.value) {
+    active.setLoop(null);
+    return;
+  }
+  if (following.value) {
+    active.setLoop({ start: 0, end: active.totalBeats });
+    return;
+  }
+  const segment = activeSegment.value;
+  const score = selectedScore.value;
+  if (!segment || !score) {
+    active.setLoop(null);
+    return;
+  }
+  const range = segmentBeatRange(score, hand.value, segment);
+  // 领域层用 startBeat/endBeat 说话，播放器接口是 start/end：在这里换名字，
+  // 免得两个坐标系在类型上看起来一样、传错了却不报错。
+  active.setLoop({ start: range.startBeat, end: range.endBeat });
+  // 开循环就把播放头放到段首：按播放就是从这一段开始反复。
+  if (!active.playing) active.seek(range.startBeat);
+}
+
+function toggleLoop() {
+  loop.value = !loop.value;
+  applyLoop();
+}
+
+/** 跟弹时谱面只画这一段：看到的和判的必须是同一份音符，否则不知道在练哪两小节。 */
+const staffScore = computed(() =>
+  following.value && followScore.value ? followScore.value : selectedScore.value,
+);
+
 /** 缺技能清单里，每一项能落到哪一节具体课；没有课的显示「暂无微课」。 */
 const missingRoutes = computed(() =>
   missing.value.map((skill) => ({ skill, route: routeForSkill(skill.id) })),
 );
-/** L1/L2 有现成微课；L3 有预备课，L4+ 仍只有技能规则。 */
+/** L1/L2 有现成微课；L3 有预备课；L4 的分解和弦/手位扩张有乐理练习关。 */
 const canPracticeBasics = computed(() => missing.value.some((skill) => skill.level <= 2));
+
+/**
+ * 跟弹写下的练习证据：练过几次、最快什么速度。
+ *
+ * 只作展示，不改变「掌握」的判断——那是过关测试的事。少了它，
+ * 「先选曲」练得再多，缺技能清单上也看不出一点变化。
+ */
+const evidence = computed(() => {
+  const out = new Map<string, SkillMastery>();
+  for (const skill of requiredSkills.value) {
+    const item = practiceEvidence(ledger.value, skill.id);
+    if (item) out.set(skill.id, item);
+  }
+  return out;
+});
 const hasL3Missing = computed(() => missing.value.some((skill) => skill.level === 3));
 const higherMissing = computed(() => missing.value.filter((skill) => skill.level > 3));
 const l3CompletedCount = computed(
@@ -144,7 +265,24 @@ onMounted(() => {
   ensurePlayer();
 });
 onBeforeUnmount(() => stopPlayback());
-watch([selectedScore, staffEl, showFingers], async () => {
+// 谱子换了（切曲 / 切段 / 开关跟弹）就把示范播放器一起换掉，
+// 否则进度条和听到的还是上一份谱子。
+watch(staffScore, () => {
+  stopPlayback();
+  position.value = 0;
+  totalBeats.value = 0;
+  ensurePlayer();
+  // 新播放器不记得循环区；跟弹一开循环就是关的，这里按开关状态补回。
+  applyLoop();
+});
+
+// 不跟弹时换分段 / 换手不会重建播放器，但循环区要跟着换；跟弹时这两者也会
+// 换掉 staffScore，那条 watch 会一并重设循环。
+watch([selectedSegment, hand], () => {
+  applyLoop();
+});
+
+watch([staffScore, staffEl, showFingers], async () => {
   await nextTick();
   drawStaff();
 }, { flush: "post" });
@@ -199,7 +337,7 @@ function skillInfo(id: string): Skill {
 
 function drawStaff() {
   const element = staffEl.value;
-  const score = selectedScore.value;
+  const score = staffScore.value;
   if (!element || !score) return;
   renderError.value = "";
   try {
@@ -227,7 +365,7 @@ function isGrandScore(score: Score): boolean {
  */
 function paintPlayback(index: number | null) {
   const element = staffEl.value;
-  const score = selectedScore.value;
+  const score = staffScore.value;
   if (!element || !score) return;
   if (isGrandScore(score)) {
     const active = index == null ? null : flattenScore(score)[index] ?? null;
@@ -262,19 +400,55 @@ function selectArrangement(arrangement: CatalogArrangement) {
   totalBeats.value = 0;
   playing.value = false;
   renderError.value = "";
+  // 换曲后分段变了，旧的循环区没有意义； staffScore 的 watch 会重建播放器。
+  loop.value = false;
   ensurePlayer();
 }
 
-/** 把当前段切成一份独立谱子，交给视奏页跟弹/评测。 */
-function followSegment() {
+/**
+ * 整段弹对过的谱面 id。
+ *
+ * 切片谱 id 自带编配、小节范围和手别（`...m1-2.RH`），所以换手要重新弹对——
+ * 右手弹顺了不代表左手也会，这一点在账本上不能含糊。
+ */
+const followedScores = computed(() => new Set(props.profile.followedSegments));
+/** 分段下拉里标「已弹对」用；和账本里的 id 对得上才算。 */
+const segmentDone = computed(
+  () =>
+    new Map(
+      segments.value.map((segment) => [
+        segment.index,
+        followedScores.value.has(sliceIdFor(segment) ?? ""),
+      ]),
+    ),
+);
+
+function sliceIdFor(segment: { start: number; end: number }): string | null {
   const score = selectedScore.value;
-  const segment = activeSegment.value;
-  if (!score || !segment) return;
-  const title = `${selected.value?.song.title ?? "曲目"} · ${selected.value?.arrangement.name ?? ""}`;
-  emit("follow-score", {
-    score: sliceScore(score, segment.start, segment.end, hand.value),
-    hand: hand.value,
-    title: `${title} · ${segment.label}`,
+  if (!score) return null;
+  return sliceScore(score, segment.start, segment.end, hand.value).id;
+}
+
+/**
+ * 跟弹整段弹对：把这段涉及的技能记一次练习，段落本身也存进档案。
+ *
+ * 记账口径和「已弹对」标记一致——全对才记。练个半熟不往账本上写，
+ * 否则技能清单上的「练过」会越来越不值钱。
+ */
+function onFollowDone(payload: { onCount: number; total: number }) {
+  const score = followScore.value;
+  if (!score || payload.total === 0 || payload.onCount < payload.total) return;
+
+  const nextLedger = recordFollowPractice(
+    props.profile.skillLedger,
+    requiredSkillsForScore(score),
+    hand.value === "BOTH" ? "both" : hand.value,
+    followBpm.value,
+  );
+
+  emit("update-profile", {
+    ...markSegmentFollowed(props.profile, score.id),
+    skillLedger: nextLedger,
   });
 }
 
@@ -283,14 +457,20 @@ function openSkillRoute(route: SkillRoute) {
     emit("open-theory", route.lessonId);
     return;
   }
+  if (route.kind === "stage") {
+    emit("open-stage", route.stageId);
+    return;
+  }
   emit("open-lesson", route.lessonId);
 }
 
 function ensurePlayer(): PreviewPlayer | null {
-  const score = selectedScore.value;
+  const score = staffScore.value;
   const packageId = selected.value?.arrangement.packageId;
   if (!score || !packageId) return null;
-  if (player && playerPackageId === packageId) return player;
+  // 缓存键带上谱子 id：跟弹切到某一段时，示范播放也要换成那一段。
+  const cacheKey = `${packageId}:${score.id}`;
+  if (player && playerPackageId === cacheKey) return player;
 
   stopPlayback();
   const next = createPreviewPlayer(score, hand.value, score.bpm, {
@@ -311,7 +491,7 @@ function ensurePlayer(): PreviewPlayer | null {
     },
   });
   player = next;
-  playerPackageId = packageId;
+  playerPackageId = cacheKey;
   totalBeats.value = next.totalBeats;
   next.setSpeed(speed.value);
   return next;
@@ -321,6 +501,8 @@ function stopPlayback() {
   player?.stop();
   player = null;
   playerPackageId = null;
+  // 播放器没了，「正在播放」的状态也要跟着清零：换谱、收起跟弹之后
+  // 新播放器是从头开始的，按钮不能还显示「暂停」。
   playing.value = false;
   playbackIndex.value = null;
   paintPlayback(null);
@@ -475,19 +657,30 @@ function setHand(value: Hand | "BOTH") {
           :disabled="segments.length === 0"
         >
           <option v-for="segment in segments" :key="segment.index" :value="segment.index">
-            {{ segment.label }}
+            {{ segment.label }}{{ segmentDone.get(segment.index) ? " · 已弹对" : "" }}
           </option>
         </select>
         <button
           type="button"
           class="primary"
           data-test="repertoire-follow"
-          :disabled="!selectedScore || !activeSegment"
-          @click="followSegment"
+          :disabled="!followScore"
+          @click="toggleFollow"
         >
-          跟弹本段
+          {{ following ? "收起跟弹" : "跟弹本段" }}
         </button>
-        <span class="segment-hint">只评这一段；练完可在复盘里回到曲库。</span>
+        <button
+          type="button"
+          class="loop"
+          :class="{ active: loop }"
+          :aria-pressed="loop"
+          :disabled="!activeSegment"
+          data-test="repertoire-loop"
+          @click="toggleLoop"
+        >
+          {{ loop ? "取消循环" : "循环本段" }}
+        </button>
+        <span class="segment-hint">只练这一段，可反复弹，不占用视奏额度。</span>
       </div>
 
       <div class="staff" ref="staffEl" data-test="repertoire-staff"></div>
@@ -510,13 +703,27 @@ function setHand(value: Hand | "BOTH") {
       </div>
       <p v-if="!audioReady" class="muted">当前浏览器没有可用的 Web Audio，示范播放不可用。</p>
 
+      <!-- 谱面在上、跟弹在下：眼睛看谱，手落在下面的琴键上 -->
+      <ScoreFollow
+        v-if="following && followScore"
+        :key="`${selectedId}-${selectedSegment}-${hand}`"
+        :score="followScore"
+        :hand="hand"
+        :bpm="followBpm"
+        prefix="repertoire"
+        @done="onFollowDone"
+      />
+
       <div class="info-grid">
         <section class="info" data-test="repertoire-skills">
           <h3>需要的技能</h3>
           <ul class="skill-list">
             <li v-for="skill in requiredSkills" :key="skill.id" :class="{ done: skill.done }">
               <span>{{ skill.done ? "✓" : "○" }} {{ skill.name }}</span>
-              <small>L{{ skill.level }}</small>
+              <small v-if="!skill.done && evidence.get(skill.id)" class="practiced">
+                练过 · {{ evidence.get(skill.id)?.bpm ?? "—" }} BPM
+              </small>
+              <small v-else>L{{ skill.level }}</small>
             </li>
           </ul>
           <template v-if="missing.length > 0">
@@ -535,10 +742,16 @@ function setHand(value: Hand | "BOTH") {
                     {{ item.route.label }}
                   </button>
                   <small v-else class="no-lesson">暂无微课</small>
+                  <small v-if="evidence.get(item.skill.id)" class="practiced">
+                    练过 · {{ evidence.get(item.skill.id)?.bpm ?? "—" }} BPM
+                  </small>
                 </span>
                 <small>L{{ item.skill.level }}</small>
               </li>
             </ol>
+            <p v-if="estimateText" class="muted estimate" data-test="repertoire-estimate">
+              {{ estimateText }}
+            </p>
             <button
               v-if="canPracticeBasics"
               type="button"
@@ -819,6 +1032,29 @@ button.primary {
   font-size: 0.78rem;
 }
 
+/* 循环开关：和速度/手的分段按钮同一视觉语言，激活时实心浅底 */
+.segment-bar .loop {
+  padding: 0.24rem 0.6rem;
+  border: 1px solid var(--pb-border-soft);
+  border-radius: var(--pb-radius-pill);
+  background: transparent;
+  color: var(--pb-ink);
+  font-size: 0.82rem;
+  cursor: pointer;
+}
+
+.segment-bar .loop.active {
+  border-color: var(--pb-accent);
+  background: var(--pb-surface);
+  box-shadow: var(--pb-shadow-1);
+  font-weight: 600;
+}
+
+.segment-bar .loop:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
 .skill-name {
   display: inline-flex;
   flex-wrap: wrap;
@@ -878,9 +1114,28 @@ button.primary {
   color: var(--pb-warn);
 }
 
+/*
+ * 「练过」是练习证据，不是掌握，也不该被看成动作：用虚线加弱色，
+ * 和旁边实心描边的「去上课」按钮一眼区分开。
+ */
+.skill-list .practiced {
+  padding: 0.05rem 0.4rem;
+  border: 1px dashed var(--pb-border);
+  border-radius: var(--pb-radius-pill);
+  color: var(--pb-muted);
+  font-size: 0.72rem;
+  white-space: nowrap;
+}
+
 .practice {
   margin-top: 0.75rem;
   border-color: var(--pb-accent);
+}
+
+/* 耗时估算跟在补短板顺序下面：先看顺序，再看要练多久 */
+.estimate {
+  margin: 0.5rem 0 0;
+  font-size: 0.85rem;
 }
 
 .vector-row {

@@ -1,4 +1,6 @@
 import { pitchToMidi } from "./pitch";
+import { measureBudget, pickupErrors } from "./pickup";
+import { samePitches, tieErrors } from "./tie";
 import type { Clef, Duration, Hand, KeySignature, NoteEvent, Pitch, Score, Step } from "./types";
 import {
   DURATION_BEATS,
@@ -15,6 +17,10 @@ const STEP_INDEX: Record<Step, number> = { C: 0, D: 1, E: 2, F: 3, G: 4, A: 5, B
 export function isAllowed(score: Score): boolean {
   const spec = LEVEL_SPEC[score.level];
   if (!spec) return false;
+  // 连音线自洽与词汇表无关，单独判（见 domain/tie.ts）。
+  if (tieErrors(score).length > 0) return false;
+  // 弱起同理：首小节拍数与 pickup 声明的自洽性先判（见 domain/pickup.ts）。
+  if (pickupErrors(score).length > 0) return false;
   if (score.hands.length < 1 || score.hands.length > 2) return false;
   if (spec.singleHand && score.hands.length !== 1) return false;
   if (new Set(score.hands).size !== score.hands.length) return false;
@@ -34,7 +40,8 @@ export function isAllowed(score: Score): boolean {
     if (stave.clef !== clef) return false;
 
     let previous: Pitch[] | null = null;
-    for (const measure of stave.measures) {
+    for (let index = 0; index < stave.measures.length; index += 1) {
+      const measure = stave.measures[index];
       let sixteenths = 0;
       for (const note of measure.notes) {
         if (!spec.durations.includes(note.duration)) return false;
@@ -46,7 +53,8 @@ export function isAllowed(score: Score): boolean {
         if (!soundingNoteOk(note, hand, clef, score.keySignature, spec, previous)) return false;
         previous = note.pitches;
       }
-      if (sixteenths !== score.meter.beats * 4) return false;
+      // 弱起小节只要求填满它自己的拍数，其余小节仍是整小节。
+      if (sixteenths !== Math.round(measureBudget(score, index) * 4)) return false;
     }
   }
   return true;

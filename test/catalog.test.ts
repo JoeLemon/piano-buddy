@@ -55,13 +55,16 @@ describe("曲库目录", () => {
     expect(onDisk).toEqual(result.catalog);
   });
 
-  it("按 songId 聚合三个编配，并用引擎评级排序", () => {
+  it("按 songId 聚合编配，并用引擎评级排序", () => {
     const catalog = buildCatalog(loadSources()).catalog!;
     expect(catalog.version).toBe(1);
-    expect(catalog.songs).toHaveLength(1);
+    // 歌曲按标题排序；新加曲子不该打乱「同一首歌多个编配」的聚合断言。
+    expect(catalog.songs.map((song) => song.songId)).toEqual([
+      "song.morning-song",
+      "song.ode-to-joy",
+    ]);
 
-    const song = catalog.songs[0];
-    expect(song.songId).toBe("song.ode-to-joy");
+    const song = catalog.songs.find((item) => item.songId === "song.ode-to-joy")!;
     expect(song.title).toBe("欢乐颂");
     expect(song.composer).toBe("Ludwig van Beethoven");
     expect(song.arrangements.map((arrangement) => arrangement.level)).toEqual([2, 3, 4]);
@@ -73,6 +76,12 @@ describe("曲库目录", () => {
     expect(song.arrangements[0].rights?.type).toBe("public-domain");
     expect(song.arrangements[1].skillDeps).toContain("chord.triad");
     expect(song.arrangements[2].skillDeps).toContain("texture.broken");
+
+    // 《晨歌》是原创的弱起 + 延音示范曲，评级从谱面算出来是 L5。
+    const morning = catalog.songs.find((item) => item.songId === "song.morning-song")!;
+    expect(morning.arrangements).toHaveLength(1);
+    expect(morning.arrangements[0].level).toBe(5);
+    expect(morning.arrangements[0].rights?.type).toBe("original");
   });
 
   it("拒绝缺 songTitle、超纲和重复 arrangementId 的包", () => {
@@ -97,5 +106,26 @@ describe("曲库目录", () => {
     ]);
     expect(duplicate.ok).toBe(false);
     expect(duplicate.errors.some((error) => error.includes("arrangementId 重复"))).toBe(true);
+  });
+
+  it("授权到期的编配不进目录，并留下下架警告", () => {
+    const sources = loadSources();
+    const expired = {
+      ...sources[0],
+      manifest: {
+        ...sources[0].manifest,
+        rights: { type: "licensed" as const, expiresAt: "2020-01-01" },
+      },
+    };
+
+    const afterExpiry = buildCatalog([expired], { now: new Date("2026-10-28T00:00:00Z") });
+    expect(afterExpiry.ok).toBe(true);
+    expect(afterExpiry.catalog?.songs).toHaveLength(0);
+    expect(afterExpiry.warnings.some((warning) => warning.includes("到期"))).toBe(true);
+
+    // 授权期内照常上架。
+    const beforeExpiry = buildCatalog([expired], { now: new Date("2019-01-01T00:00:00Z") });
+    expect(beforeExpiry.ok).toBe(true);
+    expect(beforeExpiry.catalog?.songs).toHaveLength(1);
   });
 });

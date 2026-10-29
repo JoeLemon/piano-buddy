@@ -8,10 +8,9 @@ import type { SymbolGroup } from "./theoryContent";
 /**
  * 专项题组：原来「主线闯关」的 10 组固定题量。
  *
- * 主线闯关和 L3 预备课曾经是两套独立进度，同一个知识点要在两个地方各完成一次，
- * 档案里也存了两份“学到哪”的数组。现在只保留 L3 预备课作为有先后顺序的理论课；
- * 这里的关卡退化成「专项题组」入口：点开就练，不锁定、不写进度、不要求在
- * 另一条线里再通关一次。题目仍由 `createPracticeQuestions` 按 seed 生成。
+ * 关卡顺序、解锁与进度由 `theoryPath.ts` 统一调度：基础十关按顺序解锁，
+ * 通过后把最高答对数写进 `Profile.theoryPath`，和 L3 预备课共用同一份
+ * 进度。这里只描述每关的题型、题量与通过线，不持有状态。
  */
 export type CurriculumStage = {
   id: string;
@@ -124,12 +123,61 @@ export const CURRICULUM_STAGES: readonly CurriculumStage[] = [
   },
 ];
 
+/**
+ * L4 预备两节：分解和弦与手位读谱。
+ *
+ * 这两节不搞独立界面，直接复用练习页的题型机制（`kind` 就是练习题型），
+ * 所以形状和基础关一样。内容对应技能图谱里的 texture.broken / pos.expand
+ * ——曲库 L4 编配缺这两项时，缺技能清单的按钮直达这里。
+ */
+export const L4_PREP_STAGES: readonly CurriculumStage[] = [
+  {
+    id: "L4-1",
+    title: "分解和弦",
+    goal: "听出、看出分解和弦是什么和弦",
+    guidance:
+      "分解和弦是把同一个和弦的音依次弹出。先别管顺序，把听到的音拢到一块，再按三度叠回去判断类型；拿不准就点「柱式」听对照。",
+    kind: "broken",
+    questionCount: 5,
+    passScore: 4,
+  },
+  {
+    id: "L4-2",
+    title: "手位读谱",
+    goal: "数出最两端跨几度，判断要不要撑手位",
+    guidance:
+      "只看最两端的两个音，中间音不改变跨度。五度以内一个手位放得下；六度以上要么把两端撑开，要么提前换手位。",
+    kind: "handSpan",
+    questionCount: 5,
+    passScore: 4,
+  },
+];
+
+/** 全部关卡（基础十关 + L4 预备）：练习页的 preset 查找用这一份。 */
+export const ALL_STAGES: readonly CurriculumStage[] = [
+  ...CURRICULUM_STAGES,
+  ...L4_PREP_STAGES,
+];
+
+/** 按 id 找关卡；空 id 或找不到返回 undefined。 */
+export function findStage(stageId: string | null): CurriculumStage | undefined {
+  if (!stageId) return undefined;
+  return ALL_STAGES.find((stage) => stage.id === stageId);
+}
+
+/** preset 属于哪一份关卡表；「下一关」只在同一张表里找，不跨章。 */
+export function stageListFor(stageId: string): readonly CurriculumStage[] {
+  return CURRICULUM_STAGES.some((stage) => stage.id === stageId)
+    ? CURRICULUM_STAGES
+    : L4_PREP_STAGES;
+}
+
 /** 专项题组题目：固定题量，按 seed 生成后截取，保证每次重练换题序。 */
 export function createCurriculumStageQuestions(
   stageId: string,
   seed: number,
 ): PracticeQuestion[] {
-  const stage = CURRICULUM_STAGES.find((item) => item.id === stageId);
+  const stage = findStage(stageId);
   if (!stage) return [];
   return createPracticeQuestions(stage.kind, seed, {
     symbolGroups: stage.symbolGroups,

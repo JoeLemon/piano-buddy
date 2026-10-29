@@ -67,6 +67,10 @@ for (const dir of packageDirs(root)) {
 
   const manifest = manifestResult.manifest!;
   console.log(`\n● ${manifest.id} (${manifest.name})`);
+  if (manifestResult.warnings.length > 0) {
+    warnings += manifestResult.warnings.length;
+    for (const warning of manifestResult.warnings) console.warn(`  manifest: ! ${warning}`);
+  }
 
   if (manifest.type !== "song") {
     console.log("  - 非 song 包，跳过内容 QA");

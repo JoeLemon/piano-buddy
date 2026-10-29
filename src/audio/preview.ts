@@ -25,6 +25,13 @@ export interface PreviewPlayer extends Playback {
   seek(beat: number): void;
   setSpeed(speed: number): void;
   setHand(hand: Hand | "BOTH"): void;
+  /**
+   * 设置 A–B 循环区（拍坐标，含头不含尾）；null 取消循环。
+   *
+   * 播到循环末端时回到起点重播，不触发 `onEnd`——「播完」和「循环一遍」
+   * 是两件事，示范要能反复听同一段。
+   */
+  setLoop(range: { start: number; end: number } | null): void;
   readonly playing: boolean;
   readonly positionBeats: number;
   readonly totalBeats: number;
@@ -133,6 +140,22 @@ const MAX_PREVIEW_SPEED = 2;
 const clamp = (value: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, value));
 
 /**
+ * 把调用方给的循环区钳进谱内；空区间（end <= start）和脏值一律当成「不循环」。
+ *
+ * 循环区来自界面上的小节选择，换手后谱长会变，也可能传进来 NaN，
+ * 所以每次设置都重新规范化，不信任上一次的状态。
+ */
+function normalizeLoop(
+  range: { start: number; end: number } | null,
+  totalBeats: number,
+): { start: number; end: number } | null {
+  if (!range || !Number.isFinite(range.start) || !Number.isFinite(range.end)) return null;
+  const start = clamp(range.start, 0, totalBeats);
+  const end = clamp(range.end, 0, totalBeats);
+  return end > start ? { start, end } : null;
+}
+
+/**
  * 带时钟的示范播放器。
  *
  * Web Audio 已经调度的 oscillator 不能暂停/变速，所以 pause/seek/变速
@@ -155,6 +178,8 @@ export function createPreviewPlayer(
   let speed = 1;
   let position = 0;
   let playing = false;
+  /** A–B 循环区；null 表示不循环，一路播到 totalBeats。 */
+  let loop: { start: number; end: number } | null = null;
   let ctx: AudioContext | null = null;
   let nodes: OscillatorNode[] = [];
   let noteTimers: ReturnType<typeof setTimeout>[] = [];
@@ -167,12 +192,15 @@ export function createPreviewPlayer(
 
   const secondsPerBeat = () => 60 / bpm / speed;
 
+  /** 播放的有效终点：有循环时是循环末端，否则是整首末拍。 */
+  const playEnd = () => (loop ? Math.min(loop.end, totalBeats) : totalBeats);
+
   /** 用 Date.now 而不是 performance：测试里的 fake timers 会推进它。 */
   const wallNow = () => Date.now();
   const positionNow = (): number => {
     if (!playing) return position;
     const elapsedMs = Math.max(0, wallNow() - startAtWall);
-    return clamp(startPosition + elapsedMs / 1000 / secondsPerBeat(), 0, totalBeats);
+    return clamp(startPosition + elapsedMs / 1000 / secondsPerBeat(), 0, playEnd());
   };
 
   const clearNoteTimers = () => {
@@ -208,6 +236,19 @@ export function createPreviewPlayer(
     stopAudio();
     options.onProgress?.(position);
     options.onEnd?.();
+  };
+
+  /** 循环一遍：停掉当前调度，从循环起点重新开始。 */
+  const wrap = () => {
+    if (!playing || !loop) return;
+    stopAudio();
+    position = loop.start;
+    startPlayback();
+  };
+
+  /** 换手后 totalBeats 变了，把循环区重新钳回谱内；退化成空区间就取消。 */
+  const refreshLoop = () => {
+    loop = normalizeLoop(loop, totalBeats);
   };
 
   /**
@@ -257,7 +298,9 @@ export function createPreviewPlayer(
 
   const startPlayback = () => {
     if (!validBpm || playing) return;
-    if (position >= totalBeats - 1e-6) position = 0;
+    const end = playEnd();
+    // 停在终点时按播放：不循环就回到开头，循环就回到循环起点。
+    if (position >= end - 1e-6) position = loop ? loop.start : 0;
 
     const context = openContext();
     if (!context) return;
@@ -271,10 +314,10 @@ export function createPreviewPlayer(
     playing = true;
     scheduleWindow();
     schedulerTimer = setInterval(scheduleWindow, PREVIEW_SCHEDULE_MS);
+    // 到循环末端（不循环时是整首末拍）就重播或结束。
     endTimer = setTimeout(
-      finish,
-      PREVIEW_START_DELAY * 1000 +
-        Math.max(0, totalBeats - startPosition) * secondsPerBeat() * 1000,
+      loop ? wrap : finish,
+      PREVIEW_START_DELAY * 1000 + Math.max(0, end - startPosition) * secondsPerBeat() * 1000,
     );
     options.onProgress?.(startPosition);
   };
@@ -290,16 +333,17 @@ export function createPreviewPlayer(
       options.onProgress?.(position);
     },
     stop: () => {
-      position = 0;
+      // 循环时「回到开头」指循环起点：用户刚才是围着这一段在听。
+      position = loop ? loop.start : 0;
       stopAudio();
-      options.onProgress?.(0);
+      options.onProgress?.(position);
     },
     seek: (beat: number) => {
-      const next = clamp(Number.isFinite(beat) ? beat : 0, 0, totalBeats);
+      const next = clamp(Number.isFinite(beat) ? beat : 0, 0, playEnd());
       const wasPlaying = playing;
       if (wasPlaying) stopAudio();
       position = next;
-      if (wasPlaying && position < totalBeats - 1e-6) startPlayback();
+      if (wasPlaying && position < playEnd() - 1e-6) startPlayback();
       else options.onProgress?.(position);
     },
     setSpeed: (nextSpeed: number) => {
@@ -328,8 +372,22 @@ export function createPreviewPlayer(
         (max, event) => Math.max(max, event.beat + event.beats),
         0,
       );
-      position = clamp(at, 0, totalBeats);
-      if (wasPlaying && position < totalBeats - 1e-6) startPlayback();
+      refreshLoop();
+      position = clamp(at, 0, playEnd());
+      if (wasPlaying && position < playEnd() - 1e-6) startPlayback();
+      else options.onProgress?.(position);
+    },
+    setLoop: (range: { start: number; end: number } | null) => {
+      const wasPlaying = playing;
+      const at = wasPlaying ? positionNow() : position;
+      if (wasPlaying) stopAudio();
+      loop = normalizeLoop(range, totalBeats);
+      const end = playEnd();
+      // 播放头在循环区外就拉回起点：否则按播放会先播一段循环外的音。
+      const inside =
+        loop !== null && at >= loop.start - 1e-6 && at < loop.end - 1e-6;
+      position = inside && loop ? clamp(at, 0, end) : loop ? loop.start : clamp(at, 0, end);
+      if (wasPlaying && position < end - 1e-6) startPlayback();
       else options.onProgress?.(position);
     },
     get playing() {

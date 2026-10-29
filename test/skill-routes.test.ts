@@ -20,8 +20,16 @@ describe("skillRoutes", () => {
     expect(routeForSkill("chord.progression")?.label).toContain("和弦连接");
   });
 
+  it("sends the two L4 skills to the L4 prep stages", () => {
+    expect(routeForSkill("texture.broken")).toMatchObject({ kind: "stage", stageId: "L4-1" });
+    expect(routeForSkill("texture.broken")?.label).toContain("分解和弦");
+    expect(routeForSkill("pos.expand")).toMatchObject({ kind: "stage", stageId: "L4-2" });
+    expect(routeForSkill("pos.expand")?.label).toContain("手位读谱");
+  });
+
   it("returns null for skills without a micro lesson", () => {
-    expect(routeForSkill("texture.broken")).toBeNull();
+    // pedal.sustain 仍是只有规则、没有内容的 L4 技能。
+    expect(routeForSkill("pedal.sustain")).toBeNull();
     expect(routeForSkill("")).toBeNull();
   });
 });

@@ -27,7 +27,7 @@ describe("L2 profile gates", () => {
     expect(canEnterSightLevel(both, 2)).toBe(false);
     const passed = applyL2TestResult(both, {
       pitchErrors: 0, rhythmBreaks: 0, firstWrongLabel: null,
-      wrongPitchNoteIds: [], lateNoteIds: [],
+      wrongPitchNoteIds: [], lateNoteIds: [], shortNoteIds: [],
     });
     expect(passed.l2Passed).toBe(true);
     expect(canEnterSightLevel(passed, 2)).toBe(true);
@@ -37,7 +37,7 @@ describe("L2 profile gates", () => {
     let p = { ...initialProfile(), l1RightPassed: true, l1LeftPassed: true };
     const fail = {
       pitchErrors: 3, rhythmBreaks: 0, firstWrongLabel: "C4",
-      wrongPitchNoteIds: ["a"], lateNoteIds: [],
+      wrongPitchNoteIds: ["a"], lateNoteIds: [], shortNoteIds: [],
     };
     p = applyL2TestResult(p, fail);
     p = applyL2TestResult(p, fail);
@@ -52,11 +52,11 @@ describe("L2 profile gates", () => {
   it("keeps l2Slowed sticky after L2 pass (match L1)", () => {
     const pass = {
       pitchErrors: 0, rhythmBreaks: 0, firstWrongLabel: null,
-      wrongPitchNoteIds: [], lateNoteIds: [],
+      wrongPitchNoteIds: [], lateNoteIds: [], shortNoteIds: [],
     };
     const fail = {
       pitchErrors: 3, rhythmBreaks: 0, firstWrongLabel: "C4",
-      wrongPitchNoteIds: ["a"], lateNoteIds: [],
+      wrongPitchNoteIds: ["a"], lateNoteIds: [], shortNoteIds: [],
     };
     let p = { ...initialProfile(), l1RightPassed: true, l1LeftPassed: true };
     p = applyL2TestResult(p, fail);
@@ -100,7 +100,7 @@ describe("L2 profile gates", () => {
     const both = { ...initialProfile(), l1RightPassed: true, l1LeftPassed: true };
     const withinLimit = applyL2TestResult(both, {
       pitchErrors: 2, rhythmBreaks: 1, firstWrongLabel: null,
-      wrongPitchNoteIds: [], lateNoteIds: [],
+      wrongPitchNoteIds: [], lateNoteIds: [], shortNoteIds: [],
     });
     expect(withinLimit.l2Passed).toBe(true);
     expect(withinLimit.failStreak).toBe(0);
@@ -108,7 +108,7 @@ describe("L2 profile gates", () => {
 
     const late = applyL2TestResult(both, {
       pitchErrors: 0, rhythmBreaks: 2, firstWrongLabel: null,
-      wrongPitchNoteIds: [], lateNoteIds: ["a", "b"],
+      wrongPitchNoteIds: [], lateNoteIds: ["a", "b"], shortNoteIds: [],
     });
     expect(late.l2Passed).toBe(false);
     expect(late.l2FailStreak).toBe(1);

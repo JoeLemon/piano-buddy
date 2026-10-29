@@ -1,4 +1,6 @@
 import type { Score } from "../domain/types";
+import { pickupErrors } from "../domain/pickup";
+import { tieErrors } from "../domain/tie";
 import type { PackageManifest } from "./package";
 import { rateScore } from "./difficulty";
 import { requiredSkillsForScore } from "./skillGraph";
@@ -39,6 +41,11 @@ export function validateSongContent(score: Score, manifest: PackageManifest): Co
 
   const declaredLevel = manifest.difficulty?.level;
   if (declaredLevel == null) errors.push("song 包必须声明 difficulty.level");
+
+  // 连音线断了比难度评级错更严重：跟弹会在断口处要求重新击键，听起来就是错的。
+  errors.push(...tieErrors(score));
+  // 弱起写错会连带把小节线和跟弹进度都算错，同样按错误处理。
+  errors.push(...pickupErrors(score));
 
   const required = requiredSkillsForScore(score);
   const rated = rateScore(score, {

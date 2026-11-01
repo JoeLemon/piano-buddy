@@ -152,11 +152,32 @@ jobs:
       - name: 编译（模拟器，跳过签名）
         working-directory: ios/App
         run: |
+          set -o pipefail
           xcodebuild -project App.xcodeproj -target App \
             -configuration Debug -sdk iphonesimulator \
             -derivedDataPath build \
             CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
-            build
+            build 2>&1 | tee build.log
+
+      # 临时诊断：仓库日志接口要管理员权限，失败时把末尾输出发成 commit 评论，
+      # 公开可读，方便没有 admin 权限的排查者（修好后删除这一步）
+      - name: 诊断：失败时贴编译错误
+        if: failure()
+        working-directory: ios/App
+        env:
+          TOKEN: ${{ github.token }}
+        run: |
+          node -e "
+          const fs = require('fs');
+          const path = 'build.log';
+          const log = fs.existsSync(path) ? fs.readFileSync(path, 'utf8') : '(没有 build.log)';
+          const body = 'iOS 构建失败（临时诊断）\n\n```\n' + log.slice(-6000) + '\n```';
+          fetch(process.env.GITHUB_API_URL + '/repos/' + process.env.GITHUB_REPOSITORY + '/commits/' + process.env.GITHUB_SHA + '/comments', {
+            method: 'POST',
+            headers: { authorization: 'Bearer ' + process.env.TOKEN, accept: 'application/vnd.github+json' },
+            body: JSON.stringify({ body }),
+          }).then((r) => r.text()).then((t) => console.log(t.slice(0, 200)));
+          "
 
       - name: 检查产物
         run: test -d ios/App/build/Build/Products/Debug-iphonesimulator/App.app && echo "App.app 已生成"

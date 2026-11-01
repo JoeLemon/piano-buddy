@@ -123,5 +123,43 @@ jobs:
           path: android/app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
 
-  # iOS 不在这里跑：Xcode 只在 macOS runner 上，且真机蓝牙需要设备。
-  # 蓝牙连不上属于真机问题，清单见 docs/移动端-BLE接入.md。
+  ios:
+    name: iOS 原生构建
+    # macOS runner 按 10 倍计费，跑一次 5–10 分钟；这里只编译、不签名，
+    # 要验证的是「Swift Package 依赖能解析、Info.plist 与插件注册没写错」。
+    runs-on: macos-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: 构建 web 产物
+        run: npm run build
+
+      # sync 会重写 ios/App/CapApp-SPM/Package.swift，把插件按 SPM 依赖挂进去；
+      # 那个 Package.swift 里还引用了 node_modules 下的本地路径，所以必须先 npm ci
+      - name: 同步到原生工程
+        run: npx cap sync ios
+
+      # 工程里没有提交 shared scheme（Xcode 打开时才生成），所以用 -target 而不是 -scheme；
+      # -destination 只对 scheme 有效，模拟器用 -sdk 指定即可
+      - name: 编译（模拟器，跳过签名）
+        working-directory: ios/App
+        run: |
+          xcodebuild -project App.xcodeproj -target App \
+            -configuration Debug -sdk iphonesimulator \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
+            build
+
+      - name: 检查产物
+        run: test -d ios/App/build/Build/Products/Debug-iphonesimulator/App.app && echo "App.app 已生成"
+
+  # 蓝牙能不能连、授权弹窗长什么样，只能在真机上验（模拟器没有 BLE），
+  # 清单见 docs/移动端-BLE接入.md。

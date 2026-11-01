@@ -259,7 +259,7 @@ npm run cap:ios      # 用 Xcode 打开 ios/（需要 macOS）
 | job | 内容 | 大概耗时 |
 |---|---|---|
 | `check` | `npm run build`（vue-tsc + vite）→ `npm test`（817 例）→ `validate:content`（15 包）→ `build:catalog` 后 `git diff --exit-code content/catalog.json` | 1–2 分钟 |
-| `headless` | `npx playwright-core install --with-deps chromium` → `npm run verify:all`（5 个脚本 / 60 项），失败时把 `shots/` 传成 artifact | 1 分钟 |
+| `headless` | `npx playwright-core install --with-deps chromium` → `npm run verify:all`（5 个脚本 / 60 项，`PB_SHOTS_DIR=shots`），失败时把 `shots/` 传成 artifact | 1 分钟 |
 | `android` | `npm run build` → `npx cap sync android` → JDK 21 → `./gradlew assembleDebug`，APK 传成 artifact | 2–3 分钟（首次含 Gradle 依赖下载） |
 | `ios` | `npm run build` → `npx cap sync ios` → `xcodebuild -target App -sdk iphonesimulator`（关签名，只验编译） | 4 分钟（macOS runner，编译含 SPM 解析） |
 
@@ -278,7 +278,8 @@ scheme（Xcode 打开时才生成），所以用 `-target App` + 默认 DerivedD
 npm ci
 npm run build && npm test && npm run validate:content
 npm run verify:install     # 第一次跑验收前装 chromium（约 150MB）
-npm run verify:all
+npm run verify:all         # 截图默认写系统临时目录，工作区不会脏
+PB_SHOTS_DIR=shots npm run verify:all   # 需要留档时指回仓库
 ```
 
 `verify:all` 自己起 vite、跑完关掉，端口从 5180 起往后找空闲的，地址用 `127.0.0.1`

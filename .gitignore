@@ -15,3 +15,7 @@ ios/App/build/
 ios/App/App/public/
 ios/App/App/capacitor.config.json
 ios/DerivedData/
+
+# 验收脚本的截图：每次跑都重渲染一遍（像素级差几十字节、视觉没区别），
+# 留在仓库里等于跑一次脏一次。需要留档时用 PB_SHOTS_DIR=shots。
+shots/

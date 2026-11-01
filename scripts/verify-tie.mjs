@@ -6,20 +6,14 @@
 // 运行：
 //   1. npx vite --port 5180 --strictPort
 //   2. node scripts/verify-tie.mjs
-// 截图落在 shots/tie-*.png。
+// 截图默认落系统临时目录（PB_SHOTS_DIR=shots 可留档）。
 
-import { mkdirSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
-import { BASE_URL, CHROME, loadChromium } from './lib/browser.mjs';
+import { resolve } from 'node:path';
+import { BASE_URL, CHROME, SHOTS, loadChromium } from './lib/browser.mjs';
 
 const { chromium } = loadChromium();
 
-const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const SHOTS = resolve(ROOT, 'shots');
 const URL = BASE_URL;
-
-mkdirSync(SHOTS, { recursive: true });
 
 const CHECKS = [];
 function check(name, ok, detail = '') {

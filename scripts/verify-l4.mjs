@@ -2,23 +2,20 @@
 //
 // 覆盖：L4 章地图（分解和弦 / 手位读谱两关）、L4-1 分解和弦题面（谱面 + 分解/柱式
 // 两个入口、无琶音按钮）、L4-2 手位读谱题面（谱面 + 四个跨度选项）、自由练习
-// 新增的两个题型页签。截图落 shots/。
+// 新增的两个题型页签。截图默认落系统临时目录（PB_SHOTS_DIR 可指定，如 shots/）。
 //
 // 运行：
 //   1. npm run dev（vite 默认 5173；被 demo 的 dev server 占用时换端口，
 //      如 npx vite --port 5180）
 //   2. PB_URL=http://localhost:5180 node scripts/verify-l4.mjs
 //      （vite 只听 [::1]，必须用 localhost；dev server 要用受管后台任务起）
-import { mkdirSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { BASE_URL, CHROME, loadChromium } from './lib/browser.mjs';
+import { BASE_URL, CHROME, SHOTS, loadChromium } from './lib/browser.mjs';
 
 const { chromium } = loadChromium();
 
 const URL = BASE_URL;
 const EXE = CHROME;
-const SHOTS = resolve(import.meta.dirname, '..', 'shots');
-mkdirSync(SHOTS, { recursive: true });
 
 const browser = await chromium.launch({
   headless: true,

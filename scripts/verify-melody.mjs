@@ -1,21 +1,18 @@
 // 旋律谱面化验收（开发工具，不在 package.json scripts 中）
 //
 // 覆盖：旋律题两阶段——默认出谱面 + 试听 + 跟弹组件；启用「先听再看」后谱面藏起、
-// 给出提示并自动播放；答完调性即揭谱，跟弹照同一份谱面出现。截图落 shots/。
+// 给出提示并自动播放；答完调性即揭谱，跟弹照同一份谱面出现。截图默认落系统临时目录（PB_SHOTS_DIR 可指定，如 shots/）。
 //
 // 运行：
 //   1. npx vite --port 5180（vite 只听 [::1]，必须用 localhost；demo 占 5173）
 //   2. PB_URL=http://localhost:5180 node scripts/verify-melody.mjs
-import { mkdirSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { BASE_URL, CHROME, loadChromium } from './lib/browser.mjs';
+import { BASE_URL, CHROME, SHOTS, loadChromium } from './lib/browser.mjs';
 
 const { chromium } = loadChromium();
 
 const URL = BASE_URL;
 const EXE = CHROME;
-const SHOTS = resolve(import.meta.dirname, '..', 'shots');
-mkdirSync(SHOTS, { recursive: true });
 
 const browser = await chromium.launch({
   headless: true,

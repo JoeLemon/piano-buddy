@@ -9,16 +9,13 @@
 //      如 npx vite --port 5180）
 //   2. node scripts/verify-stats.mjs（默认打 5180，可用 PB_URL 覆盖；
 //      vite 只听 [::1]，必须用 localhost）
-import { mkdirSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { BASE_URL, CHROME, loadChromium } from './lib/browser.mjs';
+import { BASE_URL, CHROME, SHOTS, loadChromium } from './lib/browser.mjs';
 
 const { chromium } = loadChromium();
 
 const URL = BASE_URL;
 const EXE = CHROME;
-const SHOTS = resolve(import.meta.dirname, '..', 'shots');
-mkdirSync(SHOTS, { recursive: true });
 
 const browser = await chromium.launch({
   headless: true,

@@ -68,8 +68,12 @@ jobs:
         # 本地仍可用 `npm run verify:install`
         run: npx playwright-core install --with-deps chromium
 
-      # verify-all 自己起 vite、跑完关掉，端口用 127.0.0.1 显式绑定
+      # verify-all 自己起 vite、跑完关掉，端口用 127.0.0.1 显式绑定。
+      # PB_SHOTS_DIR 显式指回仓库内的 shots/：本地默认写系统临时目录（免得
+      # 每次跑完工作区就脏），CI 只靠失败时的 artifact 取图，所以要落到这里。
       - name: 5 个验收脚本 / 60 项断言
+        env:
+          PB_SHOTS_DIR: shots
         run: npm run verify:all
 
       - name: 失败时保留截图

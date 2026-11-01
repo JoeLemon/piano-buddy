@@ -152,15 +152,18 @@ jobs:
 
       # 工程里没有提交 shared scheme（Xcode 打开时才生成），所以用 -target 而不是 -scheme；
       # -destination 只对 scheme 有效，模拟器用 -sdk 指定即可
+      # -derivedDataPath 必须配 -scheme 才能用（xcodebuild 会直接报错），
+      # 而工程里没有提交 shared scheme，所以这里用它默认的 DerivedData，
+      # 产物路径从 -showBuildSettings 里读。
       - name: 编译（模拟器，跳过签名）
         working-directory: ios/App
         run: |
           set -o pipefail
           xcodebuild -project App.xcodeproj -target App \
             -configuration Debug -sdk iphonesimulator \
-            -derivedDataPath build \
             CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
             build 2>&1 | tee build.log
+
 
       # 临时诊断：仓库日志接口要管理员权限，失败时把关键信息发成 commit 评论。
       # 脚本写进文件再执行——直接塞 node -e "…" 会被 shell 的反引号吃掉（第一次就是
@@ -207,7 +210,13 @@ jobs:
           node diag.mjs
 
       - name: 检查产物
-        run: test -d ios/App/build/Build/Products/Debug-iphonesimulator/App.app && echo "App.app 已生成"
+        working-directory: ios/App
+        run: |
+          dir=$(xcodebuild -project App.xcodeproj -target App -configuration Debug -sdk iphonesimulator \
+            -showBuildSettings 2>/dev/null | awk -F' = ' '/ BUILT_PRODUCTS_DIR /{print $2; exit}')
+          echo "BUILT_PRODUCTS_DIR=$dir"
+          test -d "$dir/App.app"
+          echo "App.app 已生成"
 
   # 蓝牙能不能连、授权弹窗长什么样，只能在真机上验（模拟器没有 BLE），
   # 清单见 docs/移动端-BLE接入.md。

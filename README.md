@@ -1,5 +1,7 @@
 # Piano Buddy
 
+[![CI](https://github.com/JoeLemon/piano-buddy/actions/workflows/ci.yml/badge.svg)](https://github.com/JoeLemon/piano-buddy/actions/workflows/ci.yml)
+
 识谱与视奏训练 App，面向**自学成人钢琴初学者**。
 
 > MVP 版本：先识谱，再视奏。某一档视奏只使用已经过关的音和节奏。本地运行，算法生成原创练习。
@@ -253,7 +255,10 @@ npm run cap:ios      # 用 Xcode 打开 ios/（需要 macOS）
 | job | 内容 | 大概耗时 |
 |---|---|---|
 | `check` | `npm run build`（vue-tsc + vite）→ `npm test`（809 例）→ `validate:content`（15 包）→ `build:catalog` 后 `git diff --exit-code content/catalog.json` | 1–2 分钟 |
-| `headless` | `npm run verify:install`（装 chromium）→ `npm run verify:all`（5 个脚本 / 60 项），失败时把 `shots/` 传成 artifact | 3–5 分钟 |
+| `headless` | `npx playwright-core install --with-deps chromium` → `npm run verify:all`（5 个脚本 / 60 项），失败时把 `shots/` 传成 artifact | 1 分钟 |
+
+首次实测（Ubuntu runner）：`check` 57 秒、`headless` 55 秒（装浏览器 18 秒，5 个脚本 25 秒）。
+验收脚本断言的是 DOM 与文案，不做像素比对，所以 Linux 与 Windows 之间没有出现差异。
 
 本地复现整套：
 

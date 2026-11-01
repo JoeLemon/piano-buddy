@@ -162,33 +162,49 @@ jobs:
             CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
             build 2>&1 | tee build.log
 
-      # 临时诊断：仓库日志接口要管理员权限，失败时把关键信息发成 commit 评论
-      # （公开可读，修好后删除这一步）
+      # 临时诊断：仓库日志接口要管理员权限，失败时把关键信息发成 commit 评论。
+      # 脚本写进文件再执行——直接塞 node -e "…" 会被 shell 的反引号吃掉（第一次就是
+      # 这么空着的）；YAML 块缩进 10 空格，运行到 shell 时 heredoc 正文回到行首。
       - name: 诊断：失败时贴编译错误
         if: failure()
         working-directory: ios/App
         env:
           TOKEN: ${{ github.token }}
         run: |
-          node -e "
-          const fs = require('fs');
-          const { execSync } = require('child_process');
-          const info = {};
-          info.cwd = process.cwd();
-          info.files = fs.readdirSync('.').join(',');
-          info.logExists = fs.existsSync('build.log');
-          info.logSize = info.logExists ? fs.statSync('build.log').size : -1;
-          try { info.xcodebuild = execSync('xcodebuild -version', { encoding: 'utf8' }).trim(); } catch (e) { info.xcodebuild = 'ERR ' + e.message; }
-          const log = info.logExists ? fs.readFileSync('build.log', 'utf8') : '';
-          const body = 'iOS 构建失败（临时诊断）' + String.fromCharCode(10) + String.fromCharCode(10)
-            + '```json' + String.fromCharCode(10) + JSON.stringify(info, null, 2) + String.fromCharCode(10) + '```'
-            + String.fromCharCode(10) + '```' + String.fromCharCode(10) + (log.slice(-4000) || '(空)') + String.fromCharCode(10) + '```';
-          fetch(process.env.GITHUB_API_URL + '/repos/' + process.env.GITHUB_REPOSITORY + '/commits/' + process.env.GITHUB_SHA + '/comments', {
-            method: 'POST',
-            headers: { authorization: 'Bearer ' + process.env.TOKEN, accept: 'application/vnd.github+json' },
-            body: JSON.stringify({ body }),
-          }).then((r) => r.text()).then((t) => console.log(t.slice(0, 200)));
-          "
+          cat > diag.mjs <<'JS'
+          import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
+          import { execSync } from "node:child_process";
+
+          const info = { cwd: process.cwd(), files: readdirSync(".").join(",") };
+          info.logExists = existsSync("build.log");
+          info.logSize = info.logExists ? statSync("build.log").size : -1;
+          try {
+            info.xcodebuild = execSync("xcodebuild -version", { encoding: "utf8" }).trim();
+          } catch (error) {
+            info.xcodebuild = `ERR ${error.message}`;
+          }
+          const log = info.logExists ? readFileSync("build.log", "utf8") : "";
+          const body = [
+            "iOS 构建失败（临时诊断）",
+            "",
+            "```json",
+            JSON.stringify(info, null, 2),
+            "```",
+            "```",
+            log.slice(-4000) || "(空)",
+            "```",
+          ].join("\n");
+          const response = await fetch(
+            `${process.env.GITHUB_API_URL}/repos/${process.env.GITHUB_REPOSITORY}/commits/${process.env.GITHUB_SHA}/comments`,
+            {
+              method: "POST",
+              headers: { authorization: `Bearer ${process.env.TOKEN}`, accept: "application/vnd.github+json" },
+              body: JSON.stringify({ body }),
+            },
+          );
+          console.log((await response.text()).slice(0, 300));
+          JS
+          node diag.mjs
 
       - name: 检查产物
         run: test -d ios/App/build/Build/Products/Debug-iphonesimulator/App.app && echo "App.app 已生成"

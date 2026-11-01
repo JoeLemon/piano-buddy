@@ -8,18 +8,16 @@
 //   2. node scripts/verify-tie.mjs
 // 截图落在 shots/tie-*.png。
 
-import { createRequire } from 'node:module';
 import { mkdirSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { BASE_URL, CHROME, loadChromium } from './lib/browser.mjs';
 
-const requireFromWorkspace = createRequire('C:/Users/HJY/.workbuddy/binaries/node/workspace/package.json');
-const { chromium } = requireFromWorkspace('playwright-core');
+const { chromium } = loadChromium();
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const SHOTS = resolve(ROOT, 'shots');
-const URL = process.env.PB_URL || 'http://localhost:5180';
-const CHROME = 'C:/Users/HJY/AppData/Local/ms-playwright/chromium-1223/chrome-win64/chrome.exe';
+const URL = BASE_URL;
 
 mkdirSync(SHOTS, { recursive: true });
 

@@ -9,19 +9,14 @@
 //      如 npx vite --port 5180）
 //   2. node scripts/verify-stats.mjs（默认打 5180，可用 PB_URL 覆盖；
 //      vite 只听 [::1]，必须用 localhost）
-import { createRequire } from 'node:module';
 import { mkdirSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { BASE_URL, CHROME, loadChromium } from './lib/browser.mjs';
 
-const requireFromWorkspace = createRequire(
-  process.env.PW_HOME || 'C:/Users/HJY/.workbuddy/binaries/node/workspace/package.json',
-);
-const { chromium } = requireFromWorkspace('playwright-core');
+const { chromium } = loadChromium();
 
-const URL = process.env.PB_URL || 'http://localhost:5180';
-const EXE =
-  process.env.PB_CHROME ||
-  'C:/Users/HJY/AppData/Local/ms-playwright/chromium-1223/chrome-win64/chrome.exe';
+const URL = BASE_URL;
+const EXE = CHROME;
 const SHOTS = resolve(import.meta.dirname, '..', 'shots');
 mkdirSync(SHOTS, { recursive: true });
 

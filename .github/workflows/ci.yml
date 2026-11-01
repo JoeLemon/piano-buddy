@@ -1,0 +1,83 @@
+name: CI
+
+# 一条命令能跑的东西，就不该只靠本地手跑。
+# 两个 job 分开的原因：headless 验收要下载 chromium（几分钟），
+# 类型/单测/内容校验只要几十秒——坏在代码上时没必要等浏览器。
+on:
+  push:
+    branches: [main, master]
+  # 不用 paths-ignore：文档改动也照常跑一遍（两个 job 加起来三分钟），
+  # 换来的是「required check 一定会出现」，不会出现 PR 卡在等一个被跳过的 job。
+  pull_request:
+  # 手动跑一次：改动只涉及脚本或内容、不想等 PR 时用
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: 类型 / 单测 / 内容 QA
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      # build = vue-tsc --noEmit + vite build，类型错与产物错一次暴露
+      - name: 类型检查与生产构建
+        run: npm run build
+
+      - name: 单元测试
+        run: npm test
+
+      - name: 曲目包内容 QA（词汇表 / 评级 / 指法）
+        run: npm run validate:content
+
+      # catalog.json 是 build:catalog 的产物，不是手写文件。
+      # 忘记重新生成会让曲库少一首歌，这里直接判失败。
+      - name: 曲库目录与内容包一致
+        run: |
+          npm run build:catalog
+          git diff --exit-code -- content/catalog.json
+
+  headless:
+    name: headless 视觉验收
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      # playwright-core 只装驱动、不带浏览器，浏览器版本由它自己决定，
+      # 所以这里用同一个包来装，避免「驱动 1.64 + 浏览器 1223」这种错配。
+      - name: 安装 chromium
+        # 直接用 npx 而不是 npm script：CI 不依赖 package.json 里的别名，
+        # 本地仍可用 `npm run verify:install`
+        run: npx playwright-core install --with-deps chromium
+
+      # verify-all 自己起 vite、跑完关掉，端口用 127.0.0.1 显式绑定
+      - name: 5 个验收脚本 / 60 项断言
+        run: npm run verify:all
+
+      - name: 失败时保留截图
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: verify-shots
+          path: shots/
+          if-no-files-found: ignore
+
+  # 移动端不在这里跑：Capacitor 的原生工程要 Android SDK / Xcode，
+  # BLE 也无法在模拟器里验证。真机自检清单见 docs/移动端-BLE接入.md。

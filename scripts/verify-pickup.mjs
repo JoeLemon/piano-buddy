@@ -14,18 +14,16 @@
 //   2. node scripts/verify-pickup.mjs
 // 截图落在 shots/pickup-*.png。
 
-import { createRequire } from 'node:module';
 import { mkdirSync, readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { BASE_URL, CHROME, loadChromium } from './lib/browser.mjs';
 
-const requireFromWorkspace = createRequire('C:/Users/HJY/.workbuddy/binaries/node/workspace/package.json');
-const { chromium } = requireFromWorkspace('playwright-core');
+const { chromium } = loadChromium();
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const SHOTS = resolve(ROOT, 'shots');
-const URL = process.env.PB_URL || 'http://localhost:5180';
-const CHROME = 'C:/Users/HJY/AppData/Local/ms-playwright/chromium-1223/chrome-win64/chrome.exe';
+const URL = BASE_URL;
 
 mkdirSync(SHOTS, { recursive: true });
 
@@ -159,7 +157,13 @@ await page.goto(URL, { waitUntil: 'networkidle' });
 await page.locator('[data-section="library"]').click();
 await page.waitForSelector('[data-test="repertoire"]');
 const arrangementCount = await page.locator('[data-arrangement]').count();
-check('曲库列出 4 个编配', arrangementCount === 4, `实际 ${arrangementCount}`);
+// 曲库会继续加曲子，期望值从 catalog 读，别在脚本里写死。
+const catalog = JSON.parse(readFileSync(resolve(ROOT, 'content/catalog.json'), 'utf8'));
+const expectedArrangements = catalog.songs.reduce(
+  (sum, song) => sum + song.arrangements.length,
+  0,
+);
+check(`曲库列出 ${expectedArrangements} 个编配`, arrangementCount === expectedArrangements, `实际 ${arrangementCount}`);
 check('曲库里出现《晨歌》', (await page.locator('[data-arrangement="arr.morning-song.flow"]').count()) === 1);
 
 await page.locator('[data-arrangement="arr.morning-song.flow"]').click();

@@ -80,5 +80,48 @@ jobs:
           path: shots/
           if-no-files-found: ignore
 
-  # 移动端不在这里跑：Capacitor 的原生工程要 Android SDK / Xcode，
-  # BLE 也无法在模拟器里验证。真机自检清单见 docs/移动端-BLE接入.md。
+  android:
+    name: Android 原生构建
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      # cap sync 会把 dist/ 和插件同步进 android/，所以必须先构建 web 产物
+      - name: 构建 web 产物
+        run: npm run build
+
+      - name: 同步到原生工程
+        run: npx cap sync android
+
+      # AGP 8.13 要求 JDK 17+；runner 自带 17，这里显式钉 21 免得随镜像漂移
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      # 只编 debug：要验证的是「原生工程能编译」——JDK/AGP 版本、
+      # 插件注册、AndroidManifest 里的蓝牙权限能不能被合并，这些错了
+      # 都要等真机构建才发现
+      - name: 编译 debug APK
+        working-directory: android
+        run: ./gradlew assembleDebug --no-daemon
+
+      - name: 上传 APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: piano-buddy-debug-apk
+          path: android/app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
+
+  # iOS 不在这里跑：Xcode 只在 macOS runner 上，且真机蓝牙需要设备。
+  # 蓝牙连不上属于真机问题，清单见 docs/移动端-BLE接入.md。

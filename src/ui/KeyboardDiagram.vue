@@ -25,7 +25,14 @@ import type { MidiNote } from "../midi/types";
 
 /** 只保留高亮音；电脑键位标注由全局开关（keyLabels）控制，手形示意图已移除。 */
 const props = defineProps<{
-  highlightMidi: number | null;
+  /** 单个高亮音：视奏、读谱这类一次只弹一个音的场景。 */
+  highlightMidi?: number | null;
+  /**
+   * 一次要高亮的多个音：和弦、双手同拍要一起按的键全亮。
+   *
+   * 只亮最低那个会让人以为「先按它、再按别的」，所以和声位置必须整组亮。
+   */
+  highlightMidis?: readonly number[];
 }>();
 
 /** 鼠标 / 触摸点拨琴键时把音符交给视图，和 MIDI 走同一条路。 */
@@ -49,6 +56,13 @@ const blacks = computed(() =>
 
 /** 当前音区的键帽标注表；没开标注时为空表，模板里直接判断有无。 */
 const caps = computed(() => (keyLabels.value ? keyCapsFor(activeZone.value) : new Map<number, string>()));
+
+/** 要高亮的键。单音与多音两个入口在这里归一成同一个集合，样式只看它。 */
+const targets = computed(() => {
+  if (props.highlightMidis?.length) return new Set(props.highlightMidis);
+  return props.highlightMidi == null ? new Set<number>() : new Set([props.highlightMidi]);
+});
+
 
 /** 白键槽位 → 缩略图百分比几何（与全尺寸键盘同一套 slot 坐标）。 */
 function miniWhiteStyle(slot: number) {
@@ -157,14 +171,47 @@ function onScroll(): void {
   }
 }
 
-/** 把某个音滚进视野（已经可见就不动，避免练琴时来回跳）。 */
-function revealMidi(midi: number): void {
-  const slot = slotForMidi(midi);
-  const left = slot * KEY_PITCH;
-  const right = left + WHITE_W;
-  const margin = KEY_PITCH * 2;
-  if (left >= scrollX.value + margin && right <= scrollX.value + viewPortWidth.value - margin) return;
-  scrollToLeft(left - (viewPortWidth.value - WHITE_W) / 2);
+/**
+ * 把这一组键滚进视野。
+ *
+ * 单个音很简单，一组音要难一点：和弦常常横跨两个多八度（左手低音打底、
+ * 右手三个音叠在上面），窄屏一次显示不下。死锚最低音的结果是屏幕上只剩
+ * 一个低音，另外三个在视野外——等于没高亮。所以放不下时按「视野内能盖住
+ * 最多目标键」来选窗口，平手时取更低的位置（低音是先落手的那个）。
+ *
+ * 已经看得见就不动：练琴时每按一个键都重算滚动会让键盘来回跳。
+ */
+function revealTargets(midis: readonly number[]): void {
+  if (midis.length === 0) return;
+  const slots = midis.map((midi) => slotForMidi(midi)).sort((a, b) => a - b);
+  const left = slots[0]! * KEY_PITCH;
+  const right = slots[slots.length - 1]! * KEY_PITCH + WHITE_W;
+  const margin = KEY_PITCH;
+  const visibleLeft = scrollX.value + margin;
+  const visibleRight = scrollX.value + viewPortWidth.value - margin;
+  if (left >= visibleLeft && right <= visibleRight) return;
+
+  const viewSlots = viewPortWidth.value / KEY_PITCH;
+  const first = slots[0]!;
+  const last = slots[slots.length - 1]!;
+
+  // 整组放得下：居中，左右留白一样宽
+  if (last - first + 1 <= viewSlots) {
+    scrollToLeft((first * KEY_PITCH + last * KEY_PITCH + WHITE_W) / 2 - viewPortWidth.value / 2);
+    return;
+  }
+
+  // 放不下：滑动窗口找覆盖目标键最多的一段（严格大于才换，平手保留更低的位置）
+  let bestSlot = first;
+  let bestCount = 0;
+  for (const start of slots) {
+    const count = slots.filter((slot) => slot >= start && slot < start + viewSlots).length;
+    if (count > bestCount) {
+      bestCount = count;
+      bestSlot = start;
+    }
+  }
+  scrollToLeft(bestSlot * KEY_PITCH - KEY_PITCH);
 }
 
 function onWheel(event: WheelEvent): void {
@@ -174,13 +221,15 @@ function onWheel(event: WheelEvent): void {
 }
 
 // 高亮音换了：键盘图自动把音区调到位并滚到看得见的地方。
+// 音区跟最低音走：和弦的低音决定手落在哪个八度，其余几个音跟着它展开。
 watch(
-  () => props.highlightMidi,
-  async (midi) => {
-    if (midi == null) return;
-    followMidi(midi);
+  targets,
+  async () => {
+    const list = [...targets.value];
+    if (list.length === 0) return;
+    followMidi(Math.min(...list));
     await nextTick();
-    revealMidi(midi);
+    revealTargets(list);
   },
   { immediate: true },
 );
@@ -253,9 +302,9 @@ onMounted(() => {
   syncViewport();
   // 打开时先对准正在弹的那个音（没有目标音就对当前音区），
   // 窄屏上这决定了左手五指位会不会被裁掉一半。
-  const midi = props.highlightMidi;
-  if (midi != null) {
-    scrollToLeft(slotForMidi(midi) * KEY_PITCH - (viewPortWidth.value - WHITE_W) / 2);
+  const list = [...targets.value];
+  if (list.length > 0) {
+    revealTargets(list);
   } else {
     scrollToLeft(zoneScrollTarget(zoneById(activeZone.value), KEY_PITCH, viewPortWidth.value));
   }
@@ -339,7 +388,7 @@ onBeforeUnmount(() => {
           v-for="midi in whites"
           :key="midi"
           class="white-key"
-          :class="{ 'is-target': midi === highlightMidi, 'is-down': isPressed(midi) }"
+          :class="{ 'is-target': targets.has(midi), 'is-down': isPressed(midi) }"
           :data-midi="midi"
           @pointerdown="onPointerDown($event, midi)"
           @pointerenter="onPointerEnter($event, midi)"
@@ -353,7 +402,7 @@ onBeforeUnmount(() => {
           v-for="key in blacks"
           :key="key.midi"
           class="black-key"
-          :class="{ 'is-target': key.midi === highlightMidi, 'is-down': isPressed(key.midi) }"
+          :class="{ 'is-target': targets.has(key.midi), 'is-down': isPressed(key.midi) }"
           :data-midi="key.midi"
           :style="{ '--slot': String(key.slot) }"
           @pointerdown="onPointerDown($event, key.midi)"

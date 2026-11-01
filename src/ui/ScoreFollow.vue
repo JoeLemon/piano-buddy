@@ -84,8 +84,11 @@ const result = computed(() =>
 const marks = computed(() => (result.value ? rhythmMarks(result.value) : []));
 
 /**
- * 已经按齐的音不再往回判，只画「当前这个位置」还要按哪几个键。
- * 高亮交给琴键图，眼睛不用在网格和键盘之间来回找。
+ * 已经按齐的音不再往回判，只亮「当前这个位置」还差哪几个键。
+ *
+ * 和弦要同时按三四个键，只亮一个会让人以为「先按它、再找别的」——所以整组
+ * 一起亮，按下的那个自己从高亮里消失。网格上的展开条写着音名，键盘上同一
+ * 批键亮着，眼睛不用在两处之间来回找。
  */
 const pendingMidis = computed(() => {
   const slot = plan.value.slots[slotIndex.value];
@@ -95,7 +98,7 @@ const pendingMidis = computed(() => {
   );
   return slot.midis.filter((midi) => !pressed.has(midi));
 });
-const highlightMidi = computed(() => (running.value ? pendingMidis.value[0] ?? null : null));
+const highlightMidis = computed(() => (running.value ? pendingMidis.value : []));
 
 const status = computed(() => {
   if (!started.value) return `共 ${total.value} 个位置 · ${plan.value.bpm} BPM`;
@@ -315,9 +318,6 @@ onBeforeUnmount(() => {
         停止
       </button>
       <span class="status" :data-test="`${prefix}-status`">{{ status }}</span>
-      <span v-if="running && !countingIn && pendingMidis.length > 1" class="hint-inline">
-        这一拍要一起按
-      </span>
     </div>
 
     <RhythmGrid
@@ -326,6 +326,8 @@ onBeforeUnmount(() => {
       :beat="running ? beat : plan.totalBeats"
       :marks="marks"
       :finished="!running"
+      :active-slot="running ? slotIndex : undefined"
+      :remaining="running ? pendingMidis : undefined"
       :prefix="prefix"
     />
 
@@ -340,7 +342,7 @@ onBeforeUnmount(() => {
     </p>
 
     <div class="keyboard-panel">
-      <KeyboardDiagram :highlight-midi="highlightMidi" @note="onNote" />
+      <KeyboardDiagram :highlight-midis="highlightMidis" @note="onNote" />
     </div>
   </div>
 </template>
@@ -396,11 +398,6 @@ button:disabled {
 .status {
   color: var(--pb-muted);
   font-variant-numeric: tabular-nums;
-}
-
-.hint-inline {
-  color: var(--pb-accent);
-  font-size: 0.78rem;
 }
 
 .summary {

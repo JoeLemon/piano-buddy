@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
-import { pitchClassName } from "../practice/playAnswer";
+import { midiLabel, pitchClassName } from "../practice/playAnswer";
 import { barOfBeat, type RhythmMark, type RhythmPlan } from "../practice/rhythm";
 
 /**
@@ -21,10 +21,24 @@ const props = withDefaults(
     marks?: readonly RhythmMark[];
     /** 已经弹完了：这时才把漏掉的音标出来，进行中标会误导。 */
     finished?: boolean;
+    /**
+     * 当前该按的位置（槽位下标）。
+     *
+     * 不从 `beat` 反推：漏音时时钟照常往前走，进度却停在原地，两者会错开，
+     * 照着时钟展开就成了「下一拍的和弦」。所以由知道进度的调用方给。
+     */
+    activeSlot?: number;
+    /**
+     * `activeSlot` 上还差哪几个键。
+     *
+     * 不传（`undefined`）表示调用方不跟踪按键状态，这时只列音名、不标已按；
+     * 传空数组表示这一拍已经按齐了。
+     */
+    remaining?: readonly number[];
     /** 测试钩子前缀。 */
     prefix?: string;
   }>(),
-  { marks: () => [], finished: false, prefix: "rhythm" },
+  { marks: () => [], finished: false, activeSlot: undefined, remaining: undefined, prefix: "rhythm" },
 );
 
 /** 每拍的基础宽度：四/八分音符够用，十六分音符再按密度加宽。 */
@@ -94,6 +108,7 @@ const cursorX = computed(() => {
 /**
  * 一格要显示的主音：多音位置取最高音（就是旋律那一声），其余用 +N 交代个数。
  * 和弦把三四个音名都写在这一格上会糊成一片，连隔壁格子的数字都盖住。
+ * 具体是哪几个键由下方的展开条交代——那里带八度，因为跟弹判定是八度严格的。
  */
 const mainMidi = (index: number): number | null => {
   const slot = props.plan.slots[index];
@@ -103,7 +118,7 @@ const mainMidi = (index: number): number | null => {
 
 const noteLabel = (index: number): string => {
   const midi = mainMidi(index);
-  // 跟弹只比音名不比八度，所以这里也只写音级：既短又不误导。
+  // 轨道上只写音级：一格才几十像素，带八度会挤成两个字宽。
   return midi == null ? "" : pitchClassName(midi);
 };
 
@@ -115,6 +130,26 @@ const extraCount = (index: number): number => {
   const slot = props.plan.slots[index];
   return slot && slot.midis.length > 1 ? slot.midis.length - 1 : 0;
 };
+
+/**
+ * 当前这一拍如果不止一个音，把它摊开列出来。
+ *
+ * 轨道里只写「主音 +N」是因为格子窄；到了要按的时候，学生必须知道另外
+ * 几个键到底是哪几个——尤其四音和弦，靠猜是猜不出来的。
+ */
+const activeChord = computed(() => {
+  if (props.finished || props.activeSlot == null) return null;
+  const slot = props.plan.slots[props.activeSlot];
+  return slot && slot.midis.length > 1 ? slot : null;
+});
+
+/** 已经按下去的音；调用方不跟踪按键状态时是空集，所有音都按「还没按」显示。 */
+const pressed = computed(() => {
+  const chord = activeChord.value;
+  if (!chord || props.remaining === undefined) return new Set<number>();
+  const left = new Set(props.remaining);
+  return new Set(chord.midis.filter((midi) => !left.has(midi)));
+});
 
 /** 弹完之后回头看：哪些位置一句话都没落地。 */
 const missed = computed(() => {
@@ -206,6 +241,23 @@ watch(
           <span>预备</span>
         </div>
       </div>
+    </div>
+
+    <!-- 放在轨道外面：轨道横向滚动时这一行要一直看得见 -->
+    <div
+      v-if="activeChord"
+      class="chord-hint"
+      :class="{ counting: countingIn }"
+      :data-test="`${prefix}-chord-hint`"
+    >
+      <span class="lead">{{ pressed.size ? "还差" : "一起按" }}</span>
+      <span
+        v-for="midi in activeChord.midis"
+        :key="midi"
+        class="key"
+        :class="{ done: pressed.has(midi) }"
+        :data-midi="midi"
+      >{{ midiLabel(midi) }}</span>
     </div>
   </div>
 </template>
@@ -372,5 +424,61 @@ watch(
   font-size: 1.9rem;
   line-height: 1;
   font-variant-numeric: tabular-nums;
+}
+
+/*
+ * 当前这一拍要一起按的键。
+ *
+ * 不放进格子：一格只有一两拍宽，三四个音名挤进去会互相盖住，也会盖住
+ * 隔壁格子的拍号。单独一行横排，带八度写清楚——四音和弦里 C4 与 C5
+ * 音级相同，不写八度就等于没说。
+ */
+.chord-hint {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0 0.15rem;
+  font-size: 0.74rem;
+  line-height: 1.4;
+}
+
+.chord-hint .lead {
+  color: var(--pb-muted);
+  letter-spacing: 0.02em;
+}
+
+/*
+ * 预备拍里也留着：四音和弦要靠这四拍把手摆好，藏起来等于没有准备时间。
+ * 但整体退到后面，别跟倒数数字抢注意力。
+ */
+.chord-hint.counting {
+  opacity: 0.55;
+}
+
+.chord-hint .key {
+  padding: 0 0.36rem;
+  border: 1px solid var(--pb-border);
+  border-radius: 999px;
+  background: var(--pb-surface-2);
+  color: var(--pb-ink);
+  font-variant-numeric: tabular-nums;
+  transition:
+    color 0.12s ease,
+    border-color 0.12s ease,
+    opacity 0.12s ease;
+}
+
+/* 已经按下去的键淡出打勾，剩下几个一目了然 */
+.chord-hint .key.done {
+  border-color: color-mix(in srgb, var(--pb-ok) 45%, transparent);
+  color: var(--pb-ok);
+  opacity: 0.6;
+}
+
+.chord-hint .key.done::before {
+  content: "✓";
+  margin-right: 0.18em;
+  font-size: 0.9em;
 }
 </style>

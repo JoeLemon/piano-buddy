@@ -44,10 +44,49 @@ const SCORE: Score = {
 };
 
 const C3 = 48;
+const A3 = 57;
 const C4 = 60;
 const D4 = 62;
 const BEAT_MS = 750; // 80 bpm
 const COUNT_IN = 4;
+
+/**
+ * 第 0 拍是四音和弦：左手 A3 打底，右手 A4/C5/E5 柱式。
+ *
+ * A3 与 A4 音级相同、八度不同——正是「只写音名就说不清」的那种和声。
+ */
+const CHORD_SCORE: Score = {
+  ...SCORE,
+  id: "follow-chord",
+  staves: {
+    RH: {
+      clef: "treble",
+      measures: [
+        {
+          notes: [
+            {
+              id: "c1",
+              pitches: [
+                { step: "A", octave: 4, alteration: 0 },
+                { step: "C", octave: 5, alteration: 0 },
+                { step: "E", octave: 5, alteration: 0 },
+              ],
+              duration: "w",
+            },
+          ],
+        },
+      ],
+    },
+    LH: {
+      clef: "bass",
+      measures: [
+        {
+          notes: [{ id: "c2", pitches: [{ step: "A", octave: 3, alteration: 0 }], duration: "w" }],
+        },
+      ],
+    },
+  },
+};
 
 /** 第几拍 → 绝对毫秒（预备拍占满一小节）。 */
 const at = (beat: number) => (beat + COUNT_IN) * BEAT_MS;
@@ -120,6 +159,25 @@ describe("ScoreFollow", () => {
 
     // 第 0 拍是右手 C4 + 左手 C3：主音写最高的那一声，另加一个键。
     expect(labels).toEqual(["C+1", "D"]);
+  });
+
+  it("spells out and lights every key of a four-note chord", async () => {
+    const { wrapper, press } = await setup(CHORD_SCORE);
+
+    // 轨道上仍只写「主音 +3」，但下方把四个键带八度列出来——
+    // A3 与 A4 音级相同，不写八度就等于没说清。
+    const hint = wrapper.get("[data-test=t-chord-hint]");
+    expect(hint.findAll(".key").map((key) => key.text())).toEqual(["A3", "A4", "C5", "E5"]);
+    expect(hint.get(".lead").text()).toBe("一起按");
+
+    // 键盘上这四个键一起亮：只亮最低那个会让人以为「先按它」。
+    expect(wrapper.findAll(".is-target")).toHaveLength(4);
+
+    // 按下一个之后：展开条打勾、键盘上它自己灭掉，另外三个还亮着。
+    await press(A3, at(0));
+    expect(hint.get(".lead").text()).toBe("还差");
+    expect(hint.findAll(".key.done")).toHaveLength(1);
+    expect(wrapper.findAll(".is-target")).toHaveLength(3);
   });
 
   it("widens the beat lane for sixteenth notes so note names stay readable", async () => {

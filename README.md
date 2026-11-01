@@ -12,7 +12,7 @@
 
 | 指标 | 现状 |
 |---|---|
-| 测试 | 808 通过 / 80 文件 |
+| 测试 | 816 通过 / 81 文件 |
 | 曲库 | 13 首 / 15 个编配（《欢乐颂》L2/L3/L4 + 原创《晚风》L4+ + 原创《雨巷》L4 A 小调 + 原创《灯影》L4 D 小调 + 原创《晨歌》L5 + 原创《暮色》L4+ E 小调 + 原创《小船》L5 6/8 + 原创《星光》L5 三连音 + 原创《彩虹》L5 转位/七和弦 + 原创《风铃》L6 十六分音符 + 原创《疾风》L6 换位/八度 + 原创《回廊》L6 一个降号 + 原创《薄雾》L6 减七与重复根音） |
 | 乐理 | 10 种题型、35 节关卡（基础 10 + L3 预备 9 + L4/L5 各 5 + L6 预备 6） |
 | 记谱 | 4/4、3/4、6/8；全～十六分 + 附点；跨小节连音线；弱起小节；`\|: :\|` 反复与 D.C./D.S.；3:2 三连音；C/F/G/D/♭B 大调 + a/e/d 小调；大三/小三和弦及转位；大七/小七/属七/减七/半减七；八度重复根音的柱式和弦 |
@@ -21,7 +21,7 @@
 | 学习档案 | 「我的」页回看最近 7 天逐条练习；导出/导入 JSON 备份（只含学习进度，不含外部曲库包） |
 | 练习指标 | 近 30 天练习时长/次数、按页面聚合的放弃点、错题与弱段重练的缺口命中率；一键导出 JSON |
 | 移动端 | Capacitor 壳（Android/iOS 工程已生成）+ 原生 BLE 通道：iOS 上也能连蓝牙键盘；`npm run cap:sync` 同步 |
-| CI | GitHub Actions：类型+构建、809 例单测、15 包内容 QA、曲库目录幂等、60 项 headless 验收 |
+| CI | GitHub Actions：类型+构建、816 例单测、15 包内容 QA、曲库目录幂等、60 项 headless 验收 |
 
 逐项能力、里程碑与待办清单见 `docs/开发进度与待办.md`。
 
@@ -189,6 +189,10 @@ L3 有两条并行的线，进度都只写一份 `Profile`：
   反复线仍画在原小节上，第二遍回到同一小节号，不会把「第 1 小节第二遍」标成第 3 小节。
 - **跟弹本段**：把当前段（按当前「双手/右手/左手」选择）切成一份独立谱子，
   直接进入视奏流程；同一段可以反复练，不消耗「一条最多 2 遍」的额度。
+- **和弦位置怎么按**：一拍要按好几个键时，网格下方会把这一拍的键带八度摊开
+  （`A3 · A4 · C5 · E5`），按下一个就打个勾；键盘上同一批键一起亮起来。
+  只写音名不够用——四音和弦里 `A3` 与 `A4` 音级相同、八度不同，跟弹判定又
+  是八度严格的，看不出八度就等于没说。
 - 练完的复盘主按钮是「回到曲库」；错误仍会进错题本，之后可以从练习页重练。
 - 缺技能清单里，L1–L3 的每一项都有「去 L1 跟拍」「去 L3 三和弦」这类直达按钮，
   跳到具体课位；L4–L6 的织体、转位、小调、七和弦、拍号与节奏技能直达对应预备关
@@ -254,7 +258,7 @@ npm run cap:ios      # 用 Xcode 打开 ios/（需要 macOS）
 
 | job | 内容 | 大概耗时 |
 |---|---|---|
-| `check` | `npm run build`（vue-tsc + vite）→ `npm test`（809 例）→ `validate:content`（15 包）→ `build:catalog` 后 `git diff --exit-code content/catalog.json` | 1–2 分钟 |
+| `check` | `npm run build`（vue-tsc + vite）→ `npm test`（816 例）→ `validate:content`（15 包）→ `build:catalog` 后 `git diff --exit-code content/catalog.json` | 1–2 分钟 |
 | `headless` | `npx playwright-core install --with-deps chromium` → `npm run verify:all`（5 个脚本 / 60 项），失败时把 `shots/` 传成 artifact | 1 分钟 |
 | `android` | `npm run build` → `npx cap sync android` → JDK 21 → `./gradlew assembleDebug`，APK 传成 artifact | 2–3 分钟（首次含 Gradle 依赖下载） |
 | `ios` | `npm run build` → `npx cap sync ios` → `xcodebuild -target App -sdk iphonesimulator`（关签名，只验编译） | 4 分钟（macOS runner，编译含 SPM 解析） |

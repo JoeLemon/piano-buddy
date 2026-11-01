@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref, watch } from "vue";
+import type { InstalledPackage } from "../repertoire";
+import PackageManager from "./PackageManager.vue";
 
 export type ShellSection = { id: string; label: string };
 
@@ -17,6 +19,10 @@ const props = defineProps<{
   secureContext?: boolean;
   webMidiAvailable?: boolean;
   bleAvailable?: boolean;
+  /** 当前实际使用的蓝牙通道名（App 原生 / 浏览器 Web Bluetooth）。 */
+  bleChannel?: string | null;
+  /** 是否跑在 Capacitor 原生壳里。 */
+  nativeApp?: boolean;
   midiError?: string | null;
   showBack?: boolean;
   /** 页面自己带 h1 时置 false，避免出现两行标题。 */
@@ -38,6 +44,7 @@ const emit = defineEmits<{
   "toggle-keyboard": [];
   "toggle-key-labels": [];
   navigate: [id: string];
+  "packages-changed": [packages: InstalledPackage[]];
 }>();
 
 const settingsOpen = ref(false);
@@ -279,14 +286,22 @@ onBeforeUnmount(() => {
           <details class="diag" data-test="midi-diag">
             <summary>连接诊断</summary>
             <dl class="diag-grid">
+              <div class="diag-row"><dt>运行环境</dt><dd :class="nativeApp ? 'ok' : 'muted'" data-test="diag-runtime">{{ nativeApp ? "App（原生）" : "浏览器" }}</dd></div>
               <div class="diag-row"><dt>安全上下文 (HTTPS/localhost)</dt><dd :class="secureContext ? 'ok' : 'warn'">{{ secureContext ? "是" : "否" }}</dd></div>
               <div class="diag-row"><dt>Web MIDI（USB）</dt><dd :class="webMidiAvailable ? 'ok' : 'muted'">{{ webMidiAvailable ? "支持" : "不支持" }}</dd></div>
-              <div class="diag-row"><dt>Web Bluetooth（蓝牙 MIDI）</dt><dd :class="bleAvailable ? 'ok' : 'warn'">{{ bleAvailable ? "支持" : "不支持" }}</dd></div>
+              <div class="diag-row"><dt>蓝牙通道</dt><dd :class="bleChannel ? 'ok' : 'warn'" data-test="diag-ble-channel">{{ bleChannel ?? "不可用" }}</dd></div>
               <div class="diag-row"><dt>Web MIDI 连接</dt><dd :class="webMidiConnected ? 'ok' : 'muted'">{{ webMidiConnected ? "已连接" : "未连接" }}</dd></div>
               <div class="diag-row"><dt>蓝牙设备</dt><dd :class="midiDeviceName ? 'ok' : 'muted'">{{ midiDeviceName ?? "无" }}</dd></div>
               <div class="diag-row"><dt>最近错误</dt><dd :class="midiError ? 'warn' : 'muted'">{{ midiError ?? "无" }}</dd></div>
             </dl>
+            <p v-if="!bleAvailable" class="diag-hint" data-test="diag-ble-hint">
+              {{ nativeApp
+                ? "这台设备的系统版本没有可用的蓝牙接口，请改用 USB MIDI 或屏幕琴键。"
+                : "手机浏览器（尤其 iOS Safari）没有蓝牙 MIDI 接口，请在 App 版里连接蓝牙键盘，或改用屏幕琴键 / 电脑键盘。" }}
+            </p>
           </details>
+
+          <PackageManager @changed="emit('packages-changed', $event)" />
         </div>
       </aside>
     </div>
@@ -296,6 +311,9 @@ onBeforeUnmount(() => {
 <style scoped>
 .shell {
   min-height: 100vh;
+  /* App 内（Capacitor）没有浏览器地址栏，用 dvh 跟随真实可视高度，
+     避免 iOS 上底部被工具栏吃掉一截；不支持的浏览器仍用上一行 100vh。 */
+  min-height: 100dvh;
   /* 深绿舞台底 + 五线谱音符暗纹（暗纹透明度已烘进 SVG，约 5%） */
   background-color: var(--pb-bg);
   background-image: var(--pb-bg-pattern);
@@ -309,6 +327,10 @@ onBeforeUnmount(() => {
   position: sticky;
   top: 0;
   z-index: 20;
+  /* 刘海屏 / 灵动岛：顶栏自己让出安全区，内容滚动时才不会被挡住 */
+  padding-top: env(safe-area-inset-top, 0px);
+  padding-left: env(safe-area-inset-left, 0px);
+  padding-right: env(safe-area-inset-right, 0px);
   background: color-mix(in srgb, var(--pb-bg) 88%, transparent);
   backdrop-filter: blur(10px);
   border-bottom: 1px solid var(--pb-border-soft);
@@ -552,6 +574,8 @@ h1 {
   gap: var(--pb-space-4);
   width: min(22rem, 90vw);
   padding: var(--pb-space-4) var(--pb-space-4) var(--pb-space-5);
+  /* 抽屉贴底：最后一组控件要留在 Home 指示条上方 */
+  padding-bottom: calc(var(--pb-space-5) + env(safe-area-inset-bottom, 0px));
   overflow-y: auto;
   background: var(--pb-surface);
   border-left: 1px solid var(--pb-border-soft);
@@ -687,6 +711,12 @@ h1 {
 
 .diag-row dd.muted {
   color: var(--pb-muted);
+}
+
+.diag-hint {
+  margin: var(--pb-space-2) 0 0;
+  color: var(--pb-warn);
+  line-height: 1.5;
 }
 
 /* 窄屏：面包屑让位，节拍器数值留在顶栏，其余进抽屉 */

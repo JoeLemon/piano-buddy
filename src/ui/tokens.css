@@ -165,6 +165,23 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
+/* 移动端（含 App 内 WebView）：
+   - 关掉双击缩放带来的 300ms 延迟与文字自适应放大；
+   - 下拉回弹会让固定顶栏和屏幕琴键抖动，纵向 overscroll 直接禁掉；
+   - 点按不再闪一块灰底，琴键/网格的按压反馈由组件自己画。 */
+html {
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+body {
+  overscroll-behavior-y: none;
+}
+
+* {
+  -webkit-tap-highlight-color: transparent;
+}
+
 button,
 input,
 select {

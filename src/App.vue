@@ -6,6 +6,7 @@ import { feedbackText, sightFeedbackText } from "./domain/feedback";
 import { generateL1 } from "./domain/generate";
 import { generateL2 } from "./domain/generateL2";
 import { generateL3 } from "./domain/generateL3";
+import { recordGapAttempt } from "./domain/metrics";
 import { recordPractice } from "./domain/practiceLog";
 import {
   applyAssessment,
@@ -31,6 +32,8 @@ import { scoreEvents } from "./domain/scoreEvents";
 import type { Hand, Score } from "./domain/types";
 import { DURATION_BEATS } from "./domain/vocabulary";
 import {
+  bleErrorMessage,
+  bleTransportLabel,
   connectBleMidi,
   isBleSupported,
   keyLabels,
@@ -41,6 +44,7 @@ import {
   toggleKeyboardMode,
   type MidiNote,
 } from "./midi/access";
+import { isNativeApp } from "./platform";
 import { renderGrandScore, renderScore } from "./notation/renderScore";
 import {
   grandProgressRatio,
@@ -51,6 +55,8 @@ import {
   scoreProgressRatio,
 } from "./notation/scorePaint";
 import { loadProfile, saveProfile } from "./storage/db";
+import { loadInstalledPackages } from "./storage/packages";
+import type { InstalledPackage } from "./repertoire";
 import AppShell from "./ui/AppShell.vue";
 import HomeView from "./ui/HomeView.vue";
 import LearnView from "./ui/LearnView.vue";
@@ -83,6 +89,8 @@ type Screen =
   | "me";
 
 const profile = ref<Profile>(initialProfile());
+/** 运行时安装的外部曲库包；内置曲库仍走 content/catalog.json。 */
+const installedPackages = ref<InstalledPackage[]>([]);
 const screen = ref<Screen>("loading");
 /**
  * 沉浸页的返回目标：只记录一级分区落地页（今日/学习/练习/曲库/我的）。
@@ -102,6 +110,9 @@ const webMidiAvailable = computed(
   () => typeof navigator !== "undefined" && typeof navigator.requestMIDIAccess === "function",
 );
 const bleAvailable = computed(() => isBleSupported());
+/** 当前实际会走的蓝牙通道；诊断面板显示，真机排查时先看这一行。 */
+const bleChannel = computed(() => bleTransportLabel());
+const nativeApp = computed(() => isNativeApp());
 const theme = ref<"light" | "dark">(readInitialTheme());
 const sightSession = ref(0);
 const forcedScore = ref<Score | null>(null);
@@ -409,6 +420,11 @@ onMounted(async () => {
   } catch {
     profile.value = initialProfile();
   }
+  try {
+    installedPackages.value = await loadInstalledPackages();
+  } catch {
+    installedPackages.value = [];
+  }
   screen.value = profile.value.assessment ? "home" : "placement";
   void watchMidi();
   bleStateStop = subscribeBleState((deviceName) => {
@@ -432,6 +448,15 @@ function persist(next: Profile) {
   void saveProfile(snapshot);
 }
 
+function onPackagesChanged(packages: InstalledPackage[]) {
+  installedPackages.value = packages;
+}
+
+/** 导入学习档案：覆盖当前档案并立即落盘；外部曲库包不在备份里。 */
+function onReplaceProfile(next: Profile) {
+  persist(next);
+}
+
 /** 记录练习时长的页面；其他页面（今天/学习/我的/自评）不计入。 */
 const PRACTICE_KIND_BY_SCREEN: Partial<Record<Screen, PracticeKind>> = {
   reading: "reading",
@@ -446,6 +471,56 @@ const PRACTICE_KIND_BY_SCREEN: Partial<Record<Screen, PracticeKind>> = {
 const MIN_PRACTICE_MS = 15000;
 
 let screenEnteredAt = Date.now();
+/** 当前练习页是否至少完成过一次闭环；离开页面时写进 practiceLog。 */
+let screenCompleted = false;
+/** 当前练习页的具体内容（课位/关卡/曲目），用于把放弃点定位到内容。 */
+let screenFocus: string | undefined;
+
+/**
+ * 判断一次档案更新是否代表「完成了一次练习闭环」。
+ *
+ * 只认明确的进度信号，不把「答了一题」当完成：识谱推进了一课、过了一关、
+ * 整段弹对、写完一次整曲评测，才算完成。这样离开页面时仍停在半途的记录
+ * 才会被标成放弃点。
+ */
+function didCompletePractice(previous: Profile, next: Profile): boolean {
+  if (next.l1RightPassed !== previous.l1RightPassed) return true;
+  if (next.l1LeftPassed !== previous.l1LeftPassed) return true;
+  if (next.l2Passed !== previous.l2Passed) return true;
+  if (next.l3Passed !== previous.l3Passed) return true;
+  if (next.l3PrepCompleted.length > previous.l3PrepCompleted.length) return true;
+  if (next.theoryPath.completed.length > previous.theoryPath.completed.length) return true;
+  if (next.followedSegments.length > previous.followedSegments.length) return true;
+  if ((screen.value === "reading" || screen.value === "l3") && next.lessonId !== previous.lessonId) {
+    return true;
+  }
+  const before = previous.repertoireAssessments ?? {};
+  for (const [key, value] of Object.entries(next.repertoireAssessments ?? {})) {
+    const old = before[key];
+    if (!old || old.completedAt !== value.completedAt) return true;
+  }
+  return false;
+}
+
+/** 进入练习页时抓一次内容标签；离开时即使页面状态已清空也能定位。 */
+function focusForScreen(next: Screen): string | undefined {
+  switch (next) {
+    case "reading":
+      return profile.value.lessonId ?? undefined;
+    case "sight":
+      return forcedScore.value?.id ?? "视奏";
+    case "test":
+      return `L${testLevel.value}`;
+    case "practice":
+      return practiceFocus.value ?? "自由练习";
+    case "l3":
+      return l3Focus.value ?? "L3 预备";
+    case "repertoire":
+      return "曲库";
+    default:
+      return undefined;
+  }
+}
 
 /**
  * 在页面之间切换时结算上一个页面：把停留时长写成一条练习记录。
@@ -457,10 +532,16 @@ watch(screen, (next, previous) => {
   if (kind) {
     const ms = now - screenEnteredAt;
     if (ms >= MIN_PRACTICE_MS) {
-      persist(recordPractice(profile.value, kind, ms, screenEnteredAt));
+      persist(recordPractice(profile.value, kind, ms, screenEnteredAt, {
+        completed: screenCompleted,
+        screen: previous,
+        focus: screenFocus,
+      }));
     }
   }
   screenEnteredAt = now;
+  screenCompleted = false;
+  screenFocus = focusForScreen(next);
 });
 
 function onOpenReading() {
@@ -646,6 +727,7 @@ function onAssessment(assessment: Assessment) {
 
 function onProfile(next: Profile) {
   const previous = profile.value;
+  if (didCompletePractice(previous, next)) screenCompleted = true;
   persist(next);
   if (next.lessonId === "L1-test" && previous.lessonId !== "L1-test") {
     if (next.l1RightPassed && next.l1LeftPassed) {
@@ -665,6 +747,11 @@ function onProfile(next: Profile) {
   }
 }
 
+/** 曲库整曲评测收齐：即使成绩没有刷新，也算完成了一次练习闭环。 */
+function onPracticeCompleted() {
+  screenCompleted = true;
+}
+
 function onSightFinished(payload: {
   score: Score;
   result: CompareResult;
@@ -672,6 +759,7 @@ function onSightFinished(payload: {
   wrongPitchNoteIds: string[];
   lateNoteIds: string[];
 }) {
+  screenCompleted = true;
   let next = profile.value;
   if (payload.result.pitchErrors > 0 || payload.result.rhythmBreaks > 0) {
     if (!next.errorSnippets.some((item) => item.id === payload.score.id)) {
@@ -679,6 +767,19 @@ function onSightFinished(payload: {
     }
   }
   next = pruneExhaustedErrorSnippet(next, payload.score.id);
+  if (sightOrigin.value === "error") {
+    const events = scoreEvents(payload.score, payload.hand);
+    const total = events.some((event) => event.midis.length > 1)
+      ? scoreBeats(events).length
+      : events.length;
+    next = recordGapAttempt(next, {
+      source: "error-book",
+      scoreId: payload.score.id,
+      hand: payload.hand,
+      onCount: Math.max(0, total - payload.result.pitchErrors),
+      total,
+    });
+  }
   persist(next);
   review.value = {
     feedback: sightFeedbackText(payload.result),
@@ -998,6 +1099,7 @@ function finishTestHand() {
       testFeedback.value = feedbackText(result, 2, "RH");
     }
     testComplete.value = true;
+    screenCompleted = true;
     return;
   }
   const hand = activeTestHand.value;
@@ -1016,6 +1118,7 @@ function finishTestHand() {
   if (testIndex.value === testHands.value.length - 1) {
     persist(applyTestResult(profile.value, [...testHands.value], testResults.value));
     testComplete.value = true;
+    screenCompleted = true;
   }
 }
 
@@ -1078,6 +1181,10 @@ async function watchMidi() {
 }
 
 function describeMidiError(error: unknown): string {
+  // 输入层已经把所有通道的错误收成统一的几个码，先让它翻；
+  // 翻不出来（例如 Web MIDI 的原始异常）再走下面的浏览器/系统兜底。
+  const bleText = bleErrorMessage(error);
+  if (bleText) return bleText;
   if (error instanceof Error) {
     const message = error.message || "";
     if (/not paired/i.test(message)) {
@@ -1101,10 +1208,9 @@ function describeMidiError(error: unknown): string {
 
 async function connectMidi() {
   midiError.value = null;
-  // Prefer Web Bluetooth: it is the only way to reach BLE MIDI devices (e.g. a
-  // Bluetooth digital piano) from Chrome on Windows and Android, because
-  // Windows exposes BLE MIDI only via WinRT, which Chrome's Web MIDI (winmm)
-  // cannot see. USB MIDI is picked up automatically by watchMidi() instead.
+  // BLE 通道优先：这一条在 App 里走原生插件、在浏览器里走 Web Bluetooth，
+  // 具体选谁由 src/midi/ble.ts 按平台决定。Windows 的 BLE MIDI 只经 WinRT
+  // 暴露，Chrome 的 Web MIDI（winmm）看不到，所以桌面上想连蓝牙键盘也得走这里。
   if (isBleSupported()) {
     try {
       await connectBleMidi();
@@ -1152,6 +1258,8 @@ function lineMs(current: Score, hand: Hand | "BOTH", tempo: number): number {
       :secure-context="secureContext"
       :web-midi-available="webMidiAvailable"
       :ble-available="bleAvailable"
+      :ble-channel="bleChannel"
+      :native-app="nativeApp"
       :midi-error="midiError"
       :show-back="showBack"
       :theme="theme"
@@ -1167,6 +1275,7 @@ function lineMs(current: Score, hand: Hand | "BOTH", tempo: number): number {
       @toggle-keyboard="toggleKeyboardMode"
       @toggle-key-labels="toggleKeyLabels"
       @navigate="onNavigate"
+      @packages-changed="onPackagesChanged"
     >
       <HomeView
         v-if="screen === 'home'"
@@ -1180,6 +1289,9 @@ function lineMs(current: Score, hand: Hand | "BOTH", tempo: number): number {
         @open-practice="onOpenPractice"
         @open-error="onOpenError"
         @open-placement="onOpenPlacement"
+        @open-lesson="onOpenLesson"
+        @open-theory="onOpenTheory"
+        @open-stage="onOpenStage"
       />
       <PlacementView v-else-if="screen === 'placement'" @submit="onAssessment" />
       <LearnView
@@ -1194,6 +1306,7 @@ function lineMs(current: Score, hand: Hand | "BOTH", tempo: number): number {
         :profile="profile"
         @open-placement="onOpenPlacement"
         @open-settings="shellRef?.openSettings()"
+        @replace-profile="onReplaceProfile"
       />
       <L2ReadingView
         v-else-if="screen === 'reading' && profile.lessonId?.startsWith('L2')"
@@ -1225,11 +1338,13 @@ function lineMs(current: Score, hand: Hand | "BOTH", tempo: number): number {
       <RepertoireView
         v-else-if="screen === 'repertoire'"
         :profile="profile"
+        :installed-packages="installedPackages"
         @open-reading="onOpenReading"
         @open-lesson="onOpenLesson"
         @open-theory="onOpenTheory"
         @open-stage="onOpenStage"
         @update-profile="onProfile"
+        @completed="onPracticeCompleted"
       />
       <PracticeView
         v-else-if="screen === 'practice'"
@@ -1287,6 +1402,7 @@ function lineMs(current: Score, hand: Hand | "BOTH", tempo: number): number {
 <style scoped>
 .app {
   min-height: 100vh;
+  min-height: 100dvh;
 }
 
 .loading {

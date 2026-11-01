@@ -1,5 +1,6 @@
 {
   "name": "piano-buddy",
+  "version": "2.0.0",
   "private": true,
   "type": "module",
   "scripts": {
@@ -9,19 +10,31 @@
     "validate:content": "vite-node scripts/validate-content.ts",
     "build:catalog": "vite-node scripts/build-catalog.ts",
     "import:musicxml": "vite-node scripts/import-musicxml.ts",
-    "export:demo": "vite-node scripts/export-demo-motion.ts"
+    "import:batch": "vite-node scripts/import-batch.ts",
+    "export:demo": "vite-node scripts/export-demo-motion.ts",
+    "verify:all": "node scripts/verify-all.mjs",
+    "verify:install": "playwright-core install chromium",
+    "cap:sync": "npm run build && cap sync",
+    "cap:android": "cap open android",
+    "cap:ios": "cap open ios"
   },
   "dependencies": {
+    "@capacitor-community/bluetooth-le": "^8.3.0",
+    "@capacitor/core": "^8.6.0",
     "idb": "^8.0.2",
     "vexflow": "^4.2.5",
     "vue": "^3.5.13"
   },
   "devDependencies": {
+    "@capacitor/android": "^8.6.0",
+    "@capacitor/cli": "^8.6.0",
+    "@capacitor/ios": "^8.6.0",
     "@types/node": "^22.10.2",
     "@vitejs/plugin-vue": "^5.2.1",
     "@vue/test-utils": "^2.4.6",
     "fake-indexeddb": "^6.2.5",
     "happy-dom": "^16.7.1",
+    "playwright-core": "^1.64.0",
     "typescript": "^5.7.2",
     "vite": "^6.0.6",
     "vitest": "^3.0.5",

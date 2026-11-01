@@ -9,7 +9,12 @@ export {
   isBleSupported,
   subscribeBleState,
   bleDeviceName,
+  activeBleTransportId,
+  bleErrorMessage,
+  bleTransportId,
+  bleTransportLabel,
 } from "./ble";
+export type { BleTransportId } from "./ble";
 export {
   BLACK_ROW_CAPS,
   WHITE_ROW_CAPS,

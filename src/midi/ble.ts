@@ -1,95 +1,49 @@
+import { BleMidiDecoder, noteFromMidiMessage } from "./bleCodec";
+import { nativeBleTransport } from "./bleNative";
+import { bleError, type BleMidiLink, type BleMidiTransport, type BleTransportId } from "./bleTransport";
+import { webBleTransport } from "./bleWeb";
 import type { MidiNote } from "./types";
 
-// Standard BLE MIDI service and I/O characteristic UUIDs (assigned by the
-// Bluetooth SIG in the MIDI over BLE specification).
-const MIDI_SERVICE_UUID = "03b80e5a-ede8-4b33-a751-6ce34ec4c700";
-const MIDI_IO_CHARACTERISTIC_UUID = "7772e5db-3868-4112-a1a9-f2669d106bf3";
+export { BleMidiDecoder, noteFromMidiMessage } from "./bleCodec";
+export { MIDI_IO_CHARACTERISTIC_UUID, MIDI_SERVICE_UUID } from "./bleTransport";
+export type { BleTransportId } from "./bleTransport";
 
 /**
- * Decodes MIDI-over-BLE byte packets into raw MIDI channel-voice messages.
+ * BLE MIDI 会话层：选通道 → 建连 → 解码 → 分发给订阅者。
  *
- * Each BLE notification carries one packet: a 1-byte header (with a 6- or
- * 13-bit timestamp), followed by one or more MIDI messages that may omit the
- * status byte via running status, and may be split across packet boundaries.
+ * 通道只有两条，优先级是「原生优先」：
+ *  - `capacitor-ble`：App 内可用（iOS / Android WebView 都没有 Web Bluetooth）；
+ *  - `web-bluetooth`：浏览器内可用（桌面 Chrome/Edge、Android Chrome）。
+ *
+ * 本模块不认识 DOM，也不认识 Capacitor；两条通道的差异都关在各自的
+ * transport 里，所以「解码与事件分发」只有一份实现、一套测试口径。
  */
-export class BleMidiDecoder {
-  private runningStatus = 0;
-  private pending: number[] = [];
-  private inSysex = false;
-
-  decode(input: Uint8Array, onMessage: (status: number, data1: number, data2: number) => void): void {
-    if (input.length === 0) return;
-
-    const header = input[0];
-    if ((header & 0x80) === 0) return; // malformed header
-
-    // Timestamp: 6-bit when bit 6 is clear, otherwise 13-bit (one extra byte).
-    let index = 1;
-    if ((header & 0x40) !== 0) index = 2;
-    if (index > input.length) return;
-
-    for (; index < input.length; index++) {
-      const byte = input[index];
-
-      if (this.inSysex) {
-        if (byte === 0xf7) this.inSysex = false;
-        continue;
-      }
-
-      if ((byte & 0x80) !== 0) {
-        // Status byte.
-        if (byte === 0xf0) {
-          this.inSysex = true;
-          this.runningStatus = 0;
-          this.pending = [];
-          continue;
-        }
-        if (byte === 0xf7) continue; // stray end-of-sysex
-        if (byte >= 0xf8) continue; // system real-time, single byte, keeps running status
-        this.runningStatus = byte;
-        this.pending = [];
-      } else {
-        // Data byte, decoded under the current running status.
-        this.pending.push(byte);
-        this.tryEmit(onMessage);
-      }
-    }
-  }
-
-  private tryEmit(onMessage: (status: number, data1: number, data2: number) => void): void {
-    const status = this.runningStatus;
-    const type = status & 0xf0;
-    if (type === 0xc0 || type === 0xd0) {
-      // Program change / channel pressure: one data byte.
-      if (this.pending.length >= 1) {
-        onMessage(status, this.pending[0], 0);
-        this.pending = [];
-      }
-    } else if (type === 0x80 || type === 0x90 || type === 0xa0 || type === 0xb0 || type === 0xe0) {
-      // Note on/off, poly pressure, control change, pitch bend: two data bytes.
-      if (this.pending.length >= 2) {
-        onMessage(status, this.pending[0], this.pending[1]);
-        this.pending = [];
-      }
-    }
-  }
-}
-
-/** Maps a raw channel-voice message to a note event, or null when irrelevant. */
-export function noteFromMidiMessage(status: number, data1: number, data2: number): MidiNote | null {
-  const kind = status & 0xf0;
-  const timeMs = performance.now();
-  if (kind === 0x90 && data2 > 0) {
-    return { midi: data1, timeMs, kind: "on" };
-  }
-  if (kind === 0x80 || (kind === 0x90 && data2 === 0)) {
-    return { midi: data1, timeMs, kind: "off" };
-  }
-  return null;
-}
 
 const noteListeners = new Set<(note: MidiNote) => void>();
 const stateListeners = new Set<(deviceName: string | null) => void>();
+
+/** 按优先级排列的候选通道。 */
+function transports(): readonly BleMidiTransport[] {
+  return [nativeBleTransport, webBleTransport];
+}
+
+/** 当前环境实际会用的通道；都不支持时为 null。 */
+export function bleTransport(): BleMidiTransport | null {
+  return transports().find((transport) => transport.isSupported()) ?? null;
+}
+
+export function bleTransportId(): BleTransportId | null {
+  return bleTransport()?.id ?? null;
+}
+
+/** 诊断面板用的一句话，例如「App 原生蓝牙」。 */
+export function bleTransportLabel(): string | null {
+  return bleTransport()?.label ?? null;
+}
+
+export function isBleSupported(): boolean {
+  return bleTransport() !== null;
+}
 
 export function attachBleListener(listener: (note: MidiNote) => void): () => void {
   noteListeners.add(listener);
@@ -120,22 +74,25 @@ function emitBleMidi(status: number, data1: number, data2: number): void {
   if (note) forwardBleNote(note);
 }
 
-type BleSession = { name: string; stop: () => void };
+type BleSession = { name: string; link: BleMidiLink; transport: BleTransportId };
 
 let activeSession: BleSession | null = null;
-
-export function isBleSupported(): boolean {
-  return typeof navigator !== "undefined" && typeof navigator.bluetooth?.requestDevice === "function";
-}
+/** 连接序号：并行连接时只让最后一次尝试生效。 */
+let connectAttempt = 0;
 
 export function bleDeviceName(): string | null {
   return activeSession?.name ?? null;
 }
 
+/** 当前连接的通道；未连接时为 null。 */
+export function activeBleTransportId(): BleTransportId | null {
+  return activeSession?.transport ?? null;
+}
+
 export function disconnectBleMidi(): void {
   const current = activeSession;
   activeSession = null;
-  current?.stop();
+  current?.link.disconnect();
   emitBleState();
 }
 
@@ -144,57 +101,67 @@ export function disconnectBleMidi(): void {
  * listeners. Must be called from a user gesture (button tap / click).
  */
 export async function connectBleMidi(): Promise<{ name: string }> {
-  if (!isBleSupported()) throw new Error("ble-unavailable");
+  const transport = bleTransport();
+  if (!transport) throw bleError("ble-unavailable");
 
+  // 连点两下「连接」会并行起两条链路：只让最后发起的那条落地，
+  // 先到的那条连上后立刻收掉，避免留下一个没人管的会话。
+  const attempt = ++connectAttempt;
   disconnectBleMidi();
 
-  // acceptAllDevices: some BLE MIDI keyboards advertise only their name (or a
-  // trimmed service list) once paired, so filtering by the MIDI service UUID
-  // can hide them from the chooser. Listing every BLE device is more reliable;
-  // optionalServices still grants access to the MIDI service after selection.
-  const device = await navigator.bluetooth!.requestDevice({
-    acceptAllDevices: true,
-    optionalServices: [MIDI_SERVICE_UUID],
-  });
-  if (!device.gatt) throw new Error("ble-no-gatt");
-
-  const server = await device.gatt.connect();
-  const service = await server.getPrimaryService(MIDI_SERVICE_UUID);
-  const characteristic = await service.getCharacteristic(MIDI_IO_CHARACTERISTIC_UUID);
-  await characteristic.startNotifications();
-
   const decoder = new BleMidiDecoder();
-  const onChanged = (event: Event) => {
-    const value = (event.target as BluetoothRemoteGATTCharacteristic).value;
-    if (!value) return;
-    const bytes = new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
-    decoder.decode(bytes, emitBleMidi);
-  };
-  characteristic.addEventListener("characteristicvaluechanged", onChanged);
+  let link: BleMidiLink | null = null;
+  let lostBeforeReady = false;
 
-  let stopped = false;
-  const session: BleSession = {
-    name: device.name ?? "蓝牙 MIDI 键盘",
-    stop: () => {
-      if (stopped) return;
-      stopped = true;
-      characteristic.removeEventListener("characteristicvaluechanged", onChanged);
-      device.removeEventListener("gattserverdisconnected", onGattDisconnected);
-      void characteristic.stopNotifications().catch(() => {});
-      if (server.connected) server.disconnect();
-    },
-  };
-
-  const onGattDisconnected = () => {
-    if (activeSession === session) {
+  const created = await transport.connect({
+    onPacket: (bytes) => decoder.decode(bytes, emitBleMidi),
+    onLost: () => {
+      lostBeforeReady = true;
+      // 只有「当前这条」断开才清会话：用户换了设备时，旧链路的断开通知
+      // 会晚到一步，不能把新连接一起清掉。
+      if (!link || activeSession?.link !== link) return;
       activeSession = null;
-      session.stop();
+      link.disconnect();
       emitBleState();
-    }
-  };
-  device.addEventListener("gattserverdisconnected", onGattDisconnected);
+    },
+  });
+  link = created;
 
-  activeSession = session;
+  if (attempt !== connectAttempt) {
+    created.disconnect();
+    throw bleError("ble-cancelled", "superseded by a newer attempt");
+  }
+  // 连上的一瞬间设备就掉了（iOS 上偶发）：别把死链路登记成「已连接」。
+  if (lostBeforeReady) {
+    created.disconnect();
+    throw bleError("ble-connect-failed", "device disconnected right after connecting");
+  }
+
+  activeSession = { name: created.name, link: created, transport: transport.id };
   emitBleState();
-  return { name: session.name };
+  return { name: created.name };
+}
+
+/**
+ * 把输入层的错误码翻成给用户看的一句话；不是 BLE 错误时返回 null，
+ * 交给调用方自己的兜底文案。
+ */
+export function bleErrorMessage(error: unknown): string | null {
+  if (!(error instanceof Error)) return null;
+  switch (error.name) {
+    case "ble-unavailable":
+      return "当前环境没有可用的蓝牙通道：iOS 请用 App 版，浏览器请用桌面 Chrome/Edge";
+    case "ble-cancelled":
+      return "连接已取消";
+    case "ble-no-device":
+      return "没找到设备：请让键盘进入配对模式（指示灯闪烁）后重试";
+    case "ble-no-midi-service":
+      return "这台设备没有 BLE MIDI 服务：确认键盘处于 BLE MIDI 模式（不是普通蓝牙音频）";
+    case "ble-permission":
+      return "蓝牙权限被拒绝：请到系统设置里允许本应用使用蓝牙";
+    case "ble-connect-failed":
+      return error.message.replace(/^ble-connect-failed:\s*/, "") || "连接失败，请重试";
+    default:
+      return null;
+  }
 }

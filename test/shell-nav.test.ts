@@ -96,4 +96,22 @@ describe("AppShell 设置抽屉", () => {
     await chip.trigger("click");
     expect(wrapper.emitted("connectMidi")).toHaveLength(1);
   });
+
+  it("names the bluetooth channel that is actually in use", async () => {
+    const wrapper = shell({ bleAvailable: true, bleChannel: "App 原生蓝牙" });
+    await wrapper.get("[data-test=open-settings]").trigger("click");
+    const drawer = wrapper.get("[data-test=settings]");
+    expect(drawer.get("[data-test=diag-ble-channel]").text()).toBe("App 原生蓝牙");
+    expect(drawer.get("[data-test=diag-runtime]").text()).toBe("浏览器");
+    expect(drawer.find("[data-test=diag-ble-hint]").exists()).toBe(false);
+  });
+
+  it("explains what to do when no bluetooth channel exists", async () => {
+    const wrapper = shell({ bleAvailable: false, bleChannel: null, nativeApp: false });
+    await wrapper.get("[data-test=open-settings]").trigger("click");
+    const drawer = wrapper.get("[data-test=settings]");
+    expect(drawer.get("[data-test=diag-ble-channel]").text()).toBe("不可用");
+    // 浏览器里没蓝牙时，指向 App 版而不是让人反复试点「连接」
+    expect(drawer.get("[data-test=diag-ble-hint]").text()).toContain("App 版");
+  });
 });

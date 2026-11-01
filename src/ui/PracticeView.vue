@@ -1024,8 +1024,10 @@ function goNextPreset() {
         </div>
         <p class="play-device">{{ deviceHint }}</p>
         <div class="keyboard-panel">
+          <!-- 答完题把目标键整组亮出来：和弦题要看到「就是这个和弦」，
+               只亮第一个音会让人以为剩下几个还没弹到 -->
           <KeyboardDiagram
-            :highlight-midi="answered && playTarget ? playTarget.midis[0] : null"
+            :highlight-midis="answered && playTarget ? playTarget.midis : []"
             @note="onPlayNote"
           />
         </div>

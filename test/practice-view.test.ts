@@ -410,6 +410,21 @@ describe("PracticeView · 弹奏作答", () => {
     wrapper.unmount();
   });
 
+  it("lights the whole chord once a chord question is settled", async () => {
+    const wrapper = mount(PracticeView, { props: { seed: 3 } });
+    await wrapper.get("[data-test=practice-tab-chords]").trigger("click");
+    await wrapper.get("[data-test=practice-answer-keys]").trigger("click");
+
+    const midis = promptMidis(wrapper);
+    expect(midis.length).toBeGreaterThanOrEqual(3);
+    await play(wrapper, midis);
+
+    expect(wrapper.get("[data-test=practice-feedback]").classes()).toContain("ok");
+    // 答案展示要亮整个和弦：只亮最低那个，剩下几个看着像「还没弹到」
+    expect(wrapper.findAll(".is-target")).toHaveLength(midis.length);
+    wrapper.unmount();
+  });
+
   it("falls back to choices for kinds with no playable answer", async () => {
     const wrapper = mount(PracticeView, { props: { seed: 1 } });
     // 默认是符号题：问的是符号含义，没有唯一该弹的音。

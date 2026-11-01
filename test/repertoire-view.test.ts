@@ -664,7 +664,7 @@ describe("RepertoireView 搜索与筛选", () => {
 
     await wrapper.get("[data-test=repertoire-clear]").trigger("click");
     expect(wrapper.find("[data-test=repertoire-empty]").exists()).toBe(false);
-    expect(wrapper.findAll("[data-song]")).toHaveLength(13);
+    expect(wrapper.findAll("[data-song]")).toHaveLength(14);
     expect((wrapper.get("[data-test=repertoire-search]").element as HTMLInputElement).value).toBe("");
     wrapper.unmount();
   });

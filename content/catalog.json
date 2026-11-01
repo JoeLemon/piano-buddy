@@ -2,6 +2,45 @@
   "version": 1,
   "songs": [
     {
+      "songId": "song.undertow",
+      "title": "暗涌",
+      "composer": "Piano Buddy",
+      "arrangements": [
+        {
+          "arrangementId": "arr.undertow.full",
+          "packageId": "pkg.undertow.full",
+          "name": "暗涌 · L6 减七转调",
+          "level": 6,
+          "label": "L6",
+          "bpm": 60,
+          "measures": 12,
+          "skillDeps": [
+            "chord.diminished",
+            "chord.minor",
+            "chord.progression",
+            "chord.seventh",
+            "chord.triad",
+            "clef.bass",
+            "clef.treble",
+            "hands.both",
+            "hands.together",
+            "key.accidental",
+            "key.c",
+            "pos.expand",
+            "pos.five",
+            "pos.leap",
+            "pos.shift",
+            "rhythm.sixteenth",
+            "texture.broken"
+          ],
+          "rights": {
+            "type": "original",
+            "attribution": "Piano Buddy 教学编配（原创，C 大调 4/4，第 7 小节用 G♯dim7 把调性推向关系小调 Am，后半段进入 A 和声小调）"
+          }
+        }
+      ]
+    },
+    {
       "songId": "song.mist",
       "title": "薄雾",
       "composer": "Piano Buddy",

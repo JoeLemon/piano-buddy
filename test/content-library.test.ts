@@ -54,7 +54,7 @@ const packages = loadPackages();
 
 describe("曲库内容", () => {
   it("keeps every package inside the vocabulary and above its declared level", () => {
-    expect(packages.length).toBeGreaterThanOrEqual(15);
+    expect(packages.length).toBeGreaterThanOrEqual(16);
 
     for (const item of packages) {
       const check = validateSongContent(item.score, item.manifest);
@@ -111,6 +111,52 @@ describe("《暮色》E 小调教学曲", () => {
 
     expect(result.total).toBe(plan.slots.length);
     expect(result.onCount).toBe(result.total);
+  });
+});
+
+describe("《暗涌》减七转调", () => {
+  const score = scoreOf("song.undertow.l6");
+
+  it("uses a diminished seventh as the pivot into the relative minor", () => {
+    // 调号自始至终是 C：转调靠临时升号，而不是换调号
+    expect(score.keySignature).toBe("C");
+    expect(score.staves.RH?.measures).toHaveLength(12);
+    expect(rateScore(score).level).toBe(6);
+
+    // 第 7 小节是转折点：右手一个 G#dim7 柱式，左手低音也是 G#
+    const pivot = score.staves.RH!.measures[6].notes[0]!;
+    const info = identifyChord(pivot.pitches);
+    expect(info?.quality).toBe("dim7");
+    expect(info?.root.step).toBe("G");
+    expect(info?.root.alteration).toBe(1);
+    expect(score.staves.LH!.measures[6].notes[0]!.pitches[0]).toMatchObject({
+      step: "G",
+      alteration: 1,
+    });
+
+    // 前半停在 V（第 6 小节 G 大三和弦），后半进入 A 和声小调：
+    // 第 10 小节的属和弦带 G#，这是新调性的标志。
+    const dominant = identifyChord(score.staves.LH!.measures[9].notes.map((n) => n.pitches[0]!));
+    const gSharp = score.staves.LH!.measures[9].notes.some((n) =>
+      n.pitches.some((pitch) => pitch.step === "G" && pitch.alteration === 1),
+    );
+    expect(dominant === null || dominant.quality !== "min").toBe(true);
+    expect(gSharp).toBe(true);
+
+    const skills = requiredSkillsForScore(score);
+    expect(skills.has("chord.diminished")).toBe(true);
+    expect(skills.has("key.accidental")).toBe(true);
+  });
+
+  it("plays through end to end without a wrong note", () => {
+    const plan = planForScore(score, "BOTH");
+    const msPerBeat = 60000 / score.bpm;
+    const hits = plan.slots.flatMap((slot, slotIndex) =>
+      slot.midis.map((midi) => ({ midi, slotIndex, atMs: (slot.startBeat + 4) * msPerBeat })),
+    );
+    const result = gradeRhythm(plan, hits, 0, 4);
+    expect(result.total).toBe(plan.slots.length);
+    expect(result.onCount).toBe(plan.slots.length);
   });
 });
 

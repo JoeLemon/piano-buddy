@@ -60,6 +60,7 @@ describe("曲库目录", () => {
     expect(catalog.version).toBe(1);
     // 歌曲按标题排序；新加曲子不该打乱「同一首歌多个编配」的聚合断言。
     expect(catalog.songs.map((song) => song.songId)).toEqual([
+      "song.undertow",
       "song.mist",
       "song.rainbow",
       "song.morning-song",
@@ -171,6 +172,17 @@ describe("曲库目录", () => {
     expect(corridor.arrangements[0].skillDeps).toContain("key.one-flat");
     expect(corridor.arrangements[0].skillDeps).toContain("rhythm.sixteenth");
     expect(corridor.arrangements[0].rights?.type).toBe("original");
+
+    // 《暗涌》用减七做调性过渡：C 大调 12 小节，第 7 小节 G#dim7 把调性推向关系小调 Am。
+    const undertow = catalog.songs.find((item) => item.songId === "song.undertow")!;
+    expect(undertow.arrangements).toHaveLength(1);
+    expect(undertow.arrangements[0].level).toBe(6);
+    expect(undertow.arrangements[0].label).toBe("L6");
+    expect(undertow.arrangements[0].measures).toBe(12);
+    expect(undertow.arrangements[0].skillDeps).toContain("chord.diminished");
+    // 转调靠临时升号实现（调号仍是 C），所以这条技能必须在
+    expect(undertow.arrangements[0].skillDeps).toContain("key.accidental");
+    expect(undertow.arrangements[0].rights?.type).toBe("original");
 
     // 《薄雾》补减七/半减七与八度重复根音：A 小调 8 小节柱式和弦，评级 L6。
     const mist = catalog.songs.find((item) => item.songId === "song.mist")!;

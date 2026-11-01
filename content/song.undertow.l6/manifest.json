@@ -1,0 +1,45 @@
+{
+  "schemaVersion": 1,
+  "id": "pkg.undertow.full",
+  "songId": "song.undertow",
+  "arrangementId": "arr.undertow.full",
+  "songTitle": "暗涌",
+  "composer": "Piano Buddy",
+  "name": "暗涌 · L6 减七转调",
+  "type": "song",
+  "version": "1.0.0",
+  "minAppVersion": "2.0.0",
+  "skillDeps": [
+    "chord.diminished",
+    "chord.minor",
+    "chord.progression",
+    "chord.seventh",
+    "chord.triad",
+    "clef.bass",
+    "clef.treble",
+    "hands.both",
+    "hands.together",
+    "key.accidental",
+    "key.c",
+    "pos.expand",
+    "pos.five",
+    "pos.leap",
+    "pos.shift",
+    "rhythm.sixteenth",
+    "texture.broken"
+  ],
+  "difficulty": {
+    "level": 6,
+    "bpm": 60,
+    "repeat": 0.3,
+    "len": 12
+  },
+  "assets": [
+    "content/score.json"
+  ],
+  "license": "original",
+  "rights": {
+    "type": "original",
+    "attribution": "Piano Buddy 教学编配（原创，C 大调 4/4，第 7 小节用 G♯dim7 把调性推向关系小调 Am，后半段进入 A 和声小调）"
+  }
+}

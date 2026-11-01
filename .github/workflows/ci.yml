@@ -162,8 +162,8 @@ jobs:
             CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
             build 2>&1 | tee build.log
 
-      # 临时诊断：仓库日志接口要管理员权限，失败时把末尾输出发成 commit 评论，
-      # 公开可读，方便没有 admin 权限的排查者（修好后删除这一步）
+      # 临时诊断：仓库日志接口要管理员权限，失败时把关键信息发成 commit 评论
+      # （公开可读，修好后删除这一步）
       - name: 诊断：失败时贴编译错误
         if: failure()
         working-directory: ios/App
@@ -172,9 +172,17 @@ jobs:
         run: |
           node -e "
           const fs = require('fs');
-          const path = 'build.log';
-          const log = fs.existsSync(path) ? fs.readFileSync(path, 'utf8') : '(没有 build.log)';
-          const body = 'iOS 构建失败（临时诊断）\n\n```\n' + log.slice(-6000) + '\n```';
+          const { execSync } = require('child_process');
+          const info = {};
+          info.cwd = process.cwd();
+          info.files = fs.readdirSync('.').join(',');
+          info.logExists = fs.existsSync('build.log');
+          info.logSize = info.logExists ? fs.statSync('build.log').size : -1;
+          try { info.xcodebuild = execSync('xcodebuild -version', { encoding: 'utf8' }).trim(); } catch (e) { info.xcodebuild = 'ERR ' + e.message; }
+          const log = info.logExists ? fs.readFileSync('build.log', 'utf8') : '';
+          const body = 'iOS 构建失败（临时诊断）' + String.fromCharCode(10) + String.fromCharCode(10)
+            + '```json' + String.fromCharCode(10) + JSON.stringify(info, null, 2) + String.fromCharCode(10) + '```'
+            + String.fromCharCode(10) + '```' + String.fromCharCode(10) + (log.slice(-4000) || '(空)') + String.fromCharCode(10) + '```';
           fetch(process.env.GITHUB_API_URL + '/repos/' + process.env.GITHUB_REPOSITORY + '/commits/' + process.env.GITHUB_SHA + '/comments', {
             method: 'POST',
             headers: { authorization: 'Bearer ' + process.env.TOKEN, accept: 'application/vnd.github+json' },

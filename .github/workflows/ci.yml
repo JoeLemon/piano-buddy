@@ -4,16 +4,17 @@ name: CI
 # 两个 job 分开的原因：headless 验收要下载 chromium（几分钟），
 # 类型/单测/内容校验只要几十秒——坏在代码上时没必要等浏览器。
 on:
+  # 所有分支的推送都跑：这个仓库的活儿都在 feat/* 上做，只写 main 的话
+  # 推上去要等有人开 PR 才有反馈。
   push:
-    branches: [main, master]
-  # 不用 paths-ignore：文档改动也照常跑一遍（两个 job 加起来三分钟），
-  # 换来的是「required check 一定会出现」，不会出现 PR 卡在等一个被跳过的 job。
   pull_request:
   # 手动跑一次：改动只涉及脚本或内容、不想等 PR 时用
   workflow_dispatch:
 
+# 同一条分支的「推送」和「PR 同步」测的是同一棵树：按分支名归组，
+# 后来的那次取消前一次，省掉一半重复跑。
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ci-${{ github.head_ref || github.ref_name }}
   cancel-in-progress: true
 
 jobs:

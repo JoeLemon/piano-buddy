@@ -257,11 +257,16 @@ npm run cap:ios      # 用 Xcode 打开 ios/（需要 macOS）
 | `check` | `npm run build`（vue-tsc + vite）→ `npm test`（809 例）→ `validate:content`（15 包）→ `build:catalog` 后 `git diff --exit-code content/catalog.json` | 1–2 分钟 |
 | `headless` | `npx playwright-core install --with-deps chromium` → `npm run verify:all`（5 个脚本 / 60 项），失败时把 `shots/` 传成 artifact | 1 分钟 |
 | `android` | `npm run build` → `npx cap sync android` → JDK 21 → `./gradlew assembleDebug`，APK 传成 artifact | 2–3 分钟（首次含 Gradle 依赖下载） |
+| `ios` | `npm run build` → `npx cap sync ios` → `xcodebuild -target App -sdk iphonesimulator`（关签名，只验编译） | 4 分钟（macOS runner，编译含 SPM 解析） |
 
-首次实测（Ubuntu runner）：`check` 57 秒、`headless` 55 秒（装浏览器 18 秒，5 个脚本 25 秒）、
-`android` 163 秒（Gradle 112 秒，产出 4.2 MB debug APK）。验收脚本断言的是 DOM 与文案、
-不做像素比对，所以 Linux 与 Windows 之间没有出现差异；Android 首次构建也没踩 JDK/SDK 的坑
-（runner 自带 SDK 36，AGP 会自动补齐缺的组件）。
+首次实测：`check` 57 秒、`headless` 55 秒（装浏览器 18 秒，5 个脚本 25 秒）、
+`android` 163 秒（Gradle 112 秒，产出 4.2 MB debug APK）、`ios` 236 秒（编译 170 秒）。
+验收脚本断言的是 DOM 与文案、不做像素比对，所以 Linux 与 Windows 之间没有出现差异；
+Android 首次构建也没踩 JDK/SDK 的坑（runner 自带 SDK 36，AGP 会自动补齐缺的组件）。
+
+iOS 侧唯一的坑是参数组合：`-derivedDataPath` 必须配 `-scheme`，而工程里没有提交 shared
+scheme（Xcode 打开时才生成），所以用 `-target App` + 默认 DerivedData，产物路径从
+`-showBuildSettings` 读 `BUILT_PRODUCTS_DIR`。
 
 本地复现整套：
 
@@ -277,8 +282,8 @@ npm run verify:all
 `PB_CHROME` → playwright 自带的 chromium → 本机历史路径，所以换机器只要
 `npm run verify:install`，不用改脚本。
 
-**不在 CI 里的**：iOS 构建（Xcode 只在 macOS runner 上，还要处理签名），以及蓝牙 MIDI 的真机
-连接（模拟器不支持 BLE）——这两块按 `docs/移动端-BLE接入.md` 的自检清单人工过。
+**不在 CI 里的**：签名与归档（要证书，只能在本机或受控环境做），以及蓝牙 MIDI 的真机连接
+（模拟器没有 BLE）——这两块按 `docs/移动端-BLE接入.md` 的自检清单人工过。
 
 ---
 

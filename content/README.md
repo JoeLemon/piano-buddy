@@ -111,7 +111,7 @@ Demo Song.musicxml | 2    | L1+    | L3     | +2 | 0        | !
 
 默认 manifest 的 `difficulty.level` 取「按音高/按指法」的较大值，`skillDeps` 用补指法后的识别结果，保证刚导入的包能通过内容 QA；它只是起点，作者仍要按差异表校对。`--no-fingers` 只做转换和按音高评级，适合先看谱面难度。
 
-目录里出现 `.mxl` 会跳过并提示先解压成 `.musicxml`。已存在的包目录默认跳过，确认要覆盖时加 `--force`。`--json` 输出纯 ASCII 转义的 JSON（避免 Windows 管道按 GBK 转码），人类日志走 stderr；`--report` 另存一份 UTF-8 报告。
+`.mxl`（MuseScore 默认导出的压缩包）会被自动解包读取，不必先另存。已存在的包目录默认跳过，确认要覆盖时加 `--force`。`--json` 输出纯 ASCII 转义的 JSON（避免 Windows 管道按 GBK 转码），人类日志走 stderr；`--report` 另存一份 UTF-8 报告。
 
 模板是普通 JSON，字符串里的 `{{slug}}` / `{{title}}` / `{{file}}` / `{{id}}` / `{{songId}}` / `{{arrangementId}}` / `{{level}}` / `{{pitchLevel}}` / `{{fingerLevel}}` / `{{pitchLabel}}` / `{{fingerLabel}}` / `{{bpm}}` / `{{measures}}` / `{{skills}}` 会被替换。整个字符串正好是一个占位符时保留类型，所以：
 
@@ -185,6 +185,6 @@ Demo Song.musicxml | 2    | L1+    | L3     | +2 | 0        | !
 ## 当前限制
 
 - 包大小上限：单文件 512 KB、合计 4 MB（`MAX_ASSET_BYTES` / `MAX_TOTAL_BYTES`）；暂不支持签名。
-- MusicXML 转换器只覆盖当前 `Score` 能表达的子集（见上节）；`.mxl` 压缩包需先另存为 `.musicxml`。
+- MusicXML 转换器只覆盖当前 `Score` 能表达的子集（见上节）；`.mxl` 压缩包已支持直接读。
 - 指法求解器只保证局部连贯，不保证与记谱手位一致；导入内容的指法需人工校对。
 - `catalog.json` 是构建产物，不是数据包；不要给它加 `manifest.json`。

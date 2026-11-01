@@ -7,12 +7,14 @@ import { parseManifest } from "../src/repertoire/package";
 import { validateSongContent } from "../src/repertoire/contentValidation";
 import { rateScore, type Difficulty } from "../src/repertoire/difficulty";
 import { knownSkillIds, requiredSkillsForScore } from "../src/repertoire/skillGraph";
+import { readMxl } from "./lib/mxl";
 
 /**
  * MusicXML → 曲目包素材（作者工具）。
  *
  * 用法：
  *   npm run import:musicxml -- path/to/song.musicxml
+ *   npm run import:musicxml -- path/to/song.mxl        # MuseScore 默认导出的压缩包，直接读
  *   npm run import:musicxml -- path/to/song.musicxml --out content/song.x/content/score.json --id score.song.x --bpm 96
  *   npm run import:musicxml -- path/to/song.musicxml --manifest content/song.x/manifest.json
  *
@@ -36,7 +38,7 @@ type Args = {
   fingers: boolean;
 };
 
-const USAGE = `用法：npm run import:musicxml -- <file.musicxml> [选项]
+const USAGE = `用法：npm run import:musicxml -- <file.musicxml | file.mxl> [选项]
 
   --out <path>        把转换结果写成 score.json（目录不存在会自动创建）
   --id <id>           Score id，默认 score.imported
@@ -134,14 +136,22 @@ if (!args.input) {
   console.error(USAGE);
   process.exit(1);
 }
-if (args.input.toLowerCase().endsWith(".mxl")) {
-  console.error(".mxl 是压缩包；请先在 MuseScore 里另存为未压缩的 .musicxml（或手动解压）");
-  process.exit(1);
-}
 
+/**
+ * `.mxl` 是 zip（MuseScore 默认就导出这个），里面才是谱面。
+ * 读进来先按后缀分流，后面所有流程和未压缩的 `.musicxml` 完全一样。
+ */
 let text: string;
+let mxlNote: string | null = null;
 try {
-  text = readFileSync(resolve(args.input), "utf8");
+  const raw = readFileSync(resolve(args.input));
+  if (args.input.toLowerCase().endsWith(".mxl")) {
+    const mxl = readMxl(new Uint8Array(raw));
+    text = mxl.musicxml;
+    mxlNote = `从 .mxl 里取到 ${mxl.entry}${mxl.warnings.length > 0 ? `（${mxl.warnings.join("；")}）` : ""}`;
+  } else {
+    text = raw.toString("utf8");
+  }
 } catch (error) {
   console.error(`读不了 ${args.input}：${(error as Error).message}`);
   process.exit(1);
@@ -163,6 +173,7 @@ const pitchRating = rawScore ? rateScore(rawScore) : undefined;
 const fingerRating = score && score !== rawScore ? rateScore(score) : undefined;
 
 console.log(`● 导入 ${relative(process.cwd(), resolve(args.input)) || args.input}`);
+if (mxlNote) console.log(`  ${mxlNote}`);
 
 // 转换失败就直接停：拿半成品谱面去评级/写盘只会误导作者。
 for (const warning of result.warnings) console.warn(`  ! ${warning}`);

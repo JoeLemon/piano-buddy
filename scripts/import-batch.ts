@@ -6,6 +6,7 @@ import { knownSkillIds, parseManifest } from "../src/repertoire";
 import { validateSongContent } from "../src/repertoire/contentValidation";
 import { reviewImportedScore, type ImportReview } from "../src/repertoire/importReview";
 import { importMusicXml } from "../src/repertoire/musicxml";
+import { readMxl } from "./lib/mxl";
 import {
   buildBatchManifest,
   isPlainObject,
@@ -47,7 +48,7 @@ type Args = {
   strict: boolean;
 };
 
-const USAGE = `用法：npm run import:batch -- <目录或 .musicxml> [选项]
+const USAGE = `用法：npm run import:batch -- <目录或 .musicxml/.mxl> [选项]
 
   --out <dir>            输出根目录，默认 content
   --template <path>      manifest 模板（JSON，支持 {{slug}} / {{title}} / {{level}} 等占位符）
@@ -221,13 +222,9 @@ function collectMusicXml(root: string): { files: string[]; skipped: SkippedFile[
     }
     if (!stats.isFile()) return;
     const ext = extname(path).toLowerCase();
-    if (ext === ".musicxml" || ext === ".xml") {
+    // .mxl 是 MuseScore 默认的导出格式（zip 包着谱面），解压留给读取那一步
+    if (ext === ".musicxml" || ext === ".xml" || ext === ".mxl") {
       files.push(path);
-    } else if (ext === ".mxl") {
-      skipped.push({
-        file: displayFile(path),
-        reason: ".mxl 是压缩包，请先在 MuseScore 里另存为未压缩的 .musicxml",
-      });
     }
   };
   visit(root);
@@ -258,8 +255,8 @@ function asciiJson(value: unknown): string {
 const collected = collectMusicXml(inputPath);
 if (collected.files.length === 0) {
   console.error(
-    `没有在 ${args.input} 找到 .musicxml / .xml 文件` +
-      (collected.skipped.length > 0 ? `（另有 ${collected.skipped.length} 个 .mxl 被跳过）` : ""),
+    `没有在 ${args.input} 找到 .musicxml / .xml / .mxl 文件` +
+      (collected.skipped.length > 0 ? `（另有 ${collected.skipped.length} 个文件被跳过）` : ""),
   );
   process.exit(1);
 }
@@ -305,7 +302,14 @@ collected.files.forEach((file, index) => {
 
   let text: string;
   try {
-    text = readFileSync(file, "utf8");
+    const raw = readFileSync(file);
+    if (extname(file).toLowerCase() === ".mxl") {
+      const mxl = readMxl(new Uint8Array(raw));
+      text = mxl.musicxml;
+      for (const warning of mxl.warnings) result.warnings.push(`.mxl：${warning}`);
+    } else {
+      text = raw.toString("utf8");
+    }
   } catch (error) {
     result.errors.push(`读取失败：${(error as Error).message}`);
     ratingRows.push(failedRow(display, "读取失败"));

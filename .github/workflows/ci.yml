@@ -129,6 +129,9 @@ jobs:
     # 要验证的是「Swift Package 依赖能解析、Info.plist 与插件注册没写错」。
     runs-on: macos-latest
     timeout-minutes: 30
+    # 临时：诊断步骤要往 commit 发评论（默认 token 对 contents 只读）
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
 

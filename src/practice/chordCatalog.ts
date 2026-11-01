@@ -31,8 +31,11 @@ export interface CatalogValidationResult {
 }
 
 /**
- * The canonical seven-entry chord catalog, in canonical order. Each entry's
+ * The canonical eight-entry chord catalog, in canonical order. Each entry's
  * `id` is unique. `example` shows the spelled tones for a root of C.
+ *
+ * 减七与半减七都在这里（题库口径）；谱面词汇表 `domain/chords.ts` 另有自己的
+ * 门控（半减七要 L6 + `chord.diminished`）。
  */
 export const CHORD_CATALOG: readonly ChordType[] = [
   { id: 'maj', uiLabel: 'Maj', noteCount: 3, stackedStructure: [4, 3], semitonesFromRoot: [0, 4, 7], example: ['C', 'E', 'G'] },
@@ -42,7 +45,11 @@ export const CHORD_CATALOG: readonly ChordType[] = [
   { id: 'min7', uiLabel: 'min7', noteCount: 4, stackedStructure: [3, 4, 3], semitonesFromRoot: [0, 3, 7, 10], example: ['C', 'Eb', 'G', 'Bb'] },
   { id: 'dom7', uiLabel: 'Dom7', noteCount: 4, stackedStructure: [4, 3, 3], semitonesFromRoot: [0, 4, 7, 10], example: ['C', 'E', 'G', 'Bb'] },
   { id: 'dim7', uiLabel: 'Dim7', noteCount: 4, stackedStructure: [3, 3, 3], semitonesFromRoot: [0, 3, 6, 9], example: ['C', 'Eb', 'Gb', 'Bbb'] },
+  { id: 'halfDim7', uiLabel: 'm7\u266d5', noteCount: 4, stackedStructure: [3, 3, 4], semitonesFromRoot: [0, 3, 6, 10], example: ['C', 'Eb', 'Gb', 'Bb'] },
 ];
+
+/** 题库条目数：`validateCatalog` 的结构校验按它对齐（扩词汇时同步改这里）。 */
+export const CHORD_CATALOG_SIZE = 8;
 
 /** Lookup map from catalog id to its entry. */
 export const CATALOG_BY_ID: ReadonlyMap<string, ChordType> = new Map(
@@ -51,7 +58,7 @@ export const CATALOG_BY_ID: ReadonlyMap<string, ChordType> = new Map(
 
 /**
  * Validate a catalog against Requirement 2's structural invariants:
- * - exactly 7 entries (2.2)
+ * - exactly `CHORD_CATALOG_SIZE` entries (2.2；2026-11 扩到 8，加入半减七)
  * - unique ids (2.3)
  * - each entry's `noteCount` equals `semitonesFromRoot.length` (2.4)
  * - successive differences of `semitonesFromRoot` equal `stackedStructure` (2.5)
@@ -64,9 +71,9 @@ export function validateCatalog(
 ): CatalogValidationResult {
   const errors: string[] = [];
 
-  // 2.2 — entry count must be exactly seven.
-  if (catalog.length !== 7) {
-    errors.push(`expected 7 entries got ${catalog.length}`);
+  // 2.2 — entry count must match CHORD_CATALOG_SIZE.
+  if (catalog.length !== CHORD_CATALOG_SIZE) {
+    errors.push(`expected ${CHORD_CATALOG_SIZE} entries got ${catalog.length}`);
   }
 
   // 2.3 — ids must be unique.

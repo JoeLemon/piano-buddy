@@ -134,6 +134,7 @@ const overScore: Score = {
                 { step: "E", octave: 4, alteration: 0 },
                 { step: "G", octave: 4, alteration: 0 },
                 { step: "B", octave: 4, alteration: 0 },
+                { step: "D", octave: 5, alteration: 0 },
               ],
               duration: "q",
             },

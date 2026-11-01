@@ -1,0 +1,38 @@
+{
+  "schemaVersion": 1,
+  "id": "pkg.rain-alley.full",
+  "songId": "song.rain-alley",
+  "arrangementId": "arr.rain-alley.full",
+  "songTitle": "雨巷",
+  "composer": "Piano Buddy",
+  "name": "雨巷 · L4 小调编配",
+  "type": "song",
+  "version": "1.0.0",
+  "minAppVersion": "2.0.0",
+  "skillDeps": [
+    "chord.minor",
+    "chord.progression",
+    "chord.triad",
+    "clef.bass",
+    "clef.treble",
+    "hands.both",
+    "hands.together",
+    "key.minor",
+    "pos.expand",
+    "pos.five",
+    "pos.shift",
+    "rhythm.quarter"
+  ],
+  "difficulty": {
+    "level": 4,
+    "bpm": 72,
+    "repeat": 0.3,
+    "len": 12
+  },
+  "assets": ["content/score.json"],
+  "license": "original",
+  "rights": {
+    "type": "original",
+    "attribution": "Piano Buddy 教学编配（原创，A 小调 3/4，左手柱式和弦）"
+  }
+}

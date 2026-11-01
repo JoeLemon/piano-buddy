@@ -1,7 +1,8 @@
 import { pitchLabel, pitchToMidi } from "./pitch";
+import { playOrder } from "./repeats";
 import { sameMidis, tiesFrom, tiesTo } from "./tie";
 import type { Hand, NoteEvent, Score } from "./types";
-import { DURATION_BEATS } from "./vocabulary";
+import { noteBeats } from "./vocabulary";
 
 export type TimelineNote = {
   id: string;
@@ -25,9 +26,15 @@ export function flattenScore(score: Score): TimelineNote[] {
     let beat = 0;
     // 连音线的起点：后续段不产生新音，只是把时值接上去（见 domain/tie.ts）。
     let open: TimelineNote | null = null;
-    for (const measure of measures) {
+    /** 上一遍的小节号；反复/跳转造成不连续时把连音线断开。 */
+    let previousMeasure: number | null = null;
+    for (const measureIndex of playOrder(score)) {
+      const measure = measures[measureIndex];
+      if (!measure) continue;
+      if (previousMeasure !== null && measureIndex !== previousMeasure + 1) open = null;
+      previousMeasure = measureIndex;
       for (const note of measure.notes) {
-        const beats = DURATION_BEATS[note.duration];
+        const beats = noteBeats(note);
         if (!isRest(note)) {
           const pitch = note.pitches[0];
           if (tiesFrom(note) && open && sameMidis([open.midi], [pitchToMidi(pitch)])) {

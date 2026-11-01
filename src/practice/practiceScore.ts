@@ -1,5 +1,5 @@
 import { parsePitchLabel } from "../domain/pitch";
-import type { Clef, Duration, NoteEvent, Score } from "../domain/types";
+import type { Clef, Duration, KeySignature, Meter, NoteEvent, Score } from "../domain/types";
 
 /**
  * 练习题的谱面提示。
@@ -13,6 +13,8 @@ export type PracticeStaffGroup = {
   pitches: readonly string[];
   /** 默认四分音符；音程、和弦用全音符更容易看清。 */
   duration?: Duration;
+  /** 三连音组 id（3:2）；只用于节奏课，谱面与试听共用同一个组。 */
+  tuplet?: string;
 };
 
 /** 一小节里的若干组音；和弦进行用小节来分隔每个和弦。 */
@@ -20,6 +22,10 @@ export type PracticeStaffMeasure = readonly PracticeStaffGroup[];
 
 export type PracticeStaffPrompt = {
   clef: Clef;
+  /** 调号；省略按 C 大调。小调进行用 Am/Em/Dm 让谱面调号与题目一致。 */
+  keySignature?: KeySignature;
+  /** 拍号；省略沿用调用方给的 3/4 或 4/4。6/8 节奏课显式传。 */
+  meter?: Meter;
   /** 单小节题的内容；有 `measures` 时忽略。 */
   groups: readonly PracticeStaffGroup[];
   /**
@@ -54,8 +60,8 @@ export function scoreFromPracticeStaff(
     id: `practice.staff.${id}`,
     mode: "reading-lesson",
     level: 3,
-    meter: { beats: beatsPerBar, beatValue: 4 },
-    keySignature: "C",
+    meter: prompt.meter ?? { beats: beatsPerBar, beatValue: 4 },
+    keySignature: prompt.keySignature ?? "C",
     hands: ["RH"],
     bpm,
     staves: {
@@ -148,6 +154,7 @@ function practiceNote(group: PracticeStaffGroup, index: number): NoteEvent {
     // 同音（纯一度）只保留一个音，避免 VexFlow 画出重叠符头。
     pitches: uniqueLabels(group.pitches).map((label) => parsePitchLabel(label)),
     duration: group.duration ?? "q",
+    ...(group.tuplet ? { tuplet: group.tuplet } : {}),
   };
 }
 

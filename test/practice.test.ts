@@ -29,6 +29,7 @@ import {
 import {
   CHORD_EXAMPLES,
   INTERVAL_EXAMPLES,
+  PROGRESSIONS,
   SYMBOLS,
 } from "../src/practice/theoryContent";
 
@@ -37,7 +38,7 @@ describe("practice content", () => {
     expect(INTERVAL_CATALOG_VALIDATION).toEqual({ valid: true, errors: [] });
     expect(CHORD_CATALOG_VALIDATION).toEqual({ valid: true, errors: [] });
     expect(INTERVAL_CATALOG).toHaveLength(27);
-    expect(CHORD_CATALOG).toHaveLength(7);
+    expect(CHORD_CATALOG).toHaveLength(8);
   });
 
   it("imports the symbol and melody banks without dropping entries", () => {
@@ -49,9 +50,14 @@ describe("practice content", () => {
   it("covers all 27 intervals, multiple chord roots and the new note/pattern banks", () => {
     expect(INTERVAL_EXAMPLES).toHaveLength(27);
     expect(new Set(INTERVAL_EXAMPLES.map((example) => example.intervalId)).size).toBe(27);
-    // 七种和弦各配 2–3 个根音，不再全部从 C 起算。
-    expect(CHORD_EXAMPLES.length).toBeGreaterThan(7);
-    expect(new Set(CHORD_EXAMPLES.map((example) => example.typeId)).size).toBe(7);
+    // 八种和弦各配 2–3 个根音，不再全部从 C 起算。
+    expect(CHORD_EXAMPLES.length).toBeGreaterThan(8);
+    expect(new Set(CHORD_EXAMPLES.map((example) => example.typeId)).size).toBe(8);
+    // 半减七（m7♭5）从 B 起算正好不用临时记号：B–D–F–A
+    const halfDim = CHORD_EXAMPLES.find((example) => example.typeId === "halfDim7");
+    expect(halfDim?.notes).toBe("B4 – D5 – F5 – A5");
+    expect(halfDim?.label).toBe("半减七和弦 (m7♭5)");
+
     expect(NOTE_EXAMPLES.length).toBeGreaterThan(8);
     expect(PATTERN_EXAMPLES).toHaveLength(8);
     for (const example of [...INTERVAL_EXAMPLES, ...CHORD_EXAMPLES, ...NOTE_EXAMPLES, ...PATTERN_EXAMPLES]) {
@@ -82,6 +88,15 @@ describe("practice content", () => {
       // 谱面试听与分解试听都从这份提示出发生成，听到的和看到的是一致的。
       const score = scoreFromPracticeStaff(question.staff!, question.id);
       expect(score.staves.RH?.measures).toHaveLength(3);
+    }
+  });
+
+  it("keeps minor progression staves in their minor key", () => {
+    const minor = PROGRESSIONS.filter((example) => example.key.includes("小调"));
+    expect(minor.length).toBeGreaterThan(0);
+    for (const example of minor) {
+      expect(example.staff.keySignature, example.id).toBe("Am");
+      expect(scoreFromPracticeStaff(example.staff, example.id).keySignature).toBe("Am");
     }
   });
 
@@ -238,7 +253,7 @@ describe("L4 practice content", () => {
     expect(questions.length).toBeGreaterThan(0);
     for (const question of questions) {
       expect(question.kind).toBe("broken");
-      expect(question.answerId).toMatch(/^(maj|min|aug|maj7|min7|dom7|dim7)$/);
+      expect(question.answerId).toMatch(/^(maj|min|aug|maj7|min7|dom7|dim7|halfDim7)$/);
       expect(question.choices).toHaveLength(4);
       expect(question.choices.some((choice) => choice.id === question.answerId)).toBe(true);
       // prompt 就是依次弹出的几个音，和谱面组一一对应。

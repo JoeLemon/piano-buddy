@@ -1,7 +1,8 @@
 import { pitchLabel, pitchToMidi } from "./pitch";
+import { playOrder } from "./repeats";
 import { sameMidis, tiesFrom, tiesTo } from "./tie";
 import type { Hand, NoteEvent, Score } from "./types";
-import { DURATION_BEATS } from "./vocabulary";
+import { noteBeats } from "./vocabulary";
 
 /**
  * 一次按键要同时按下的音。单音是长度 1，和弦/双音是长度 2–3。
@@ -45,13 +46,19 @@ export function scoreEvents(score: Score, hand?: Hand | "BOTH"): ScoreEvent[] {
      * 记谱约束在这里是天然的。
      */
     let open: { event: ScoreEvent; midis: number[] } | null = null;
-    for (const measure of measures) {
+    /** 上一遍的小节号；反复/跳转造成不连续时把连音线断开。 */
+    let previousMeasure: number | null = null;
+    for (const measureIndex of playOrder(score)) {
+      const measure = measures[measureIndex];
+      if (!measure) continue;
+      if (previousMeasure !== null && measureIndex !== previousMeasure + 1) open = null;
+      previousMeasure = measureIndex;
       for (const note of measure.notes) {
         if (!isRest(note)) {
           const noteMidis = note.pitches.map((pitch) => pitchToMidi(pitch));
           if (tiesFrom(note) && open && sameMidis(open.midis, noteMidis)) {
             // 承接前音：不产生新的按键，只把时值接上去。
-            open.event.beats += DURATION_BEATS[note.duration];
+            open.event.beats += noteBeats(note);
             if (!tiesTo(note)) open = null;
           } else {
             const pitches = [...note.pitches].sort(
@@ -66,13 +73,13 @@ export function scoreEvents(score: Score, hand?: Hand | "BOTH"): ScoreEvent[] {
               labels: note.pitches.map((pitch) => pitchLabel(pitch)),
               fingers: note.pitches.map((_, index) => note.fingers?.[index] ?? null),
               duration: note.duration,
-              beats: DURATION_BEATS[note.duration],
+              beats: noteBeats(note),
             };
             events.push(event);
             open = tiesTo(note) ? { event, midis: event.midis } : null;
           }
         }
-        beat += DURATION_BEATS[note.duration];
+        beat += noteBeats(note);
       }
     }
   }

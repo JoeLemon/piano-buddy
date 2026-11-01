@@ -224,13 +224,15 @@ export function measureForSounding(
   const measures = score.staves[hand]?.measures ?? [];
   const total = measures.length;
   if (total === 0) return { current: 0, total: 0 };
-  let seen = 0;
-  for (let index = 0; index < total; index += 1) {
-    const sounding = measures[index].notes.filter((note) => !isRestNote(note)).length;
-    if (soundingIndex < seen + sounding) return { current: index + 1, total };
-    seen += sounding;
-  }
-  return { current: total, total };
+  // 反复时同一个 id 会出现多次；按 id 找原始小节，第二遍也标同一条。
+  const entry = flattenScore({ ...score, hands: [hand], staves: { [hand]: score.staves[hand] } })[
+    soundingIndex
+  ];
+  if (!entry) return { current: total, total };
+  const index = measures.findIndex((measure) =>
+    measure.notes.some((note) => note.id === entry.id),
+  );
+  return { current: index < 0 ? total : index + 1, total };
 }
 
 /** 滚到指定发声音（不含休止符）处，用于「听一遍」的跟随。 */
@@ -250,14 +252,24 @@ type Mark = {
   color: string;
 } | null;
 
+/**
+ * 渲染层为弱起/短小节补的休止符只是排版占位，不在 `measure.notes` 里。
+ * 上色和滚动都必须跳过它们，否则后面的音会整体错一位。
+ */
+function staveNoteGroups(element: HTMLElement): Element[] {
+  return Array.from(element.querySelectorAll(".vf-stavenote")).filter(
+    (group) => !group.classList.contains("pb-filler-rest"),
+  );
+}
+
 function applyGroupMarks(
   element: HTMLElement,
   count: number,
   markFor: (groupIndex: number) => Mark,
 ): void {
-  const groups = element.querySelectorAll(".vf-stavenote");
+  const groups = staveNoteGroups(element);
   for (let index = 0; index < count; index += 1) {
-    const group = groups.item(index) as Element | null;
+    const group = groups[index];
     if (!group) break;
     const mark = markFor(index);
     group.removeAttribute("data-played");
@@ -285,8 +297,8 @@ function applyGroupMarks(
 
 function scrollGroupIntoView(element: HTMLElement, groupIndex: number): void {
   if (groupIndex < 0) return;
-  const groups = element.querySelectorAll(".vf-stavenote");
-  const node = groups.item(groupIndex) as Element | null;
+  const groups = staveNoteGroups(element);
+  const node = groups[groupIndex];
   if (!node) return;
   const svg = node.closest("svg");
   if (!svg) return;

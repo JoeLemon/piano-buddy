@@ -1,6 +1,8 @@
 import type { Score } from "../domain/types";
 import { pickupErrors } from "../domain/pickup";
+import { repeatErrors } from "../domain/repeats";
 import { tieErrors } from "../domain/tie";
+import { tupletErrors } from "../domain/tuplets";
 import type { PackageManifest } from "./package";
 import { rateScore } from "./difficulty";
 import { requiredSkillsForScore } from "./skillGraph";
@@ -46,6 +48,10 @@ export function validateSongContent(score: Score, manifest: PackageManifest): Co
   errors.push(...tieErrors(score));
   // 弱起写错会连带把小节线和跟弹进度都算错，同样按错误处理。
   errors.push(...pickupErrors(score));
+  // 反复不闭合/落点缺失会让演奏顺序不可预测，作者必须改谱。
+  errors.push(...repeatErrors(score));
+  // 三连音组不完整会让小节拍数永远差 1/3，必须按错误处理。
+  errors.push(...tupletErrors(score));
 
   const required = requiredSkillsForScore(score);
   const rated = rateScore(score, {

@@ -4,29 +4,34 @@ import type {
   Hand,
   KeySignature,
   Measure,
+  NavigationKind,
+  NavigationMark,
   NoteEvent,
   Pitch,
+  RepeatSpan,
   Score,
   Stave,
   Step,
   TieMark,
 } from "../domain/types";
+import { repeatErrors } from "../domain/repeats";
+import { DURATION_BEATS } from "../domain/vocabulary";
 import { minLevelForScore } from "./skillGraph";
 
 /**
  * ── MusicXML → Score 导入器（作者工具）──────────────────────
  * 《二期 §2.5》承诺的「MuseScore 导出 → 规范化 → Score JSON」这一段。
  *
- * 只做 P0.5 说清楚的那部分能力：单声部 + 简单和弦、4/4 与 3/4、
- * C/F/G/D/♭B 大调、全到十六分音符（含附点）。
+ * 只做 P0.5 说清楚的那部分能力：单声部 + 简单和弦、4/4、3/4 与 6/8、
+ * C/F/G/D/♭B 大调 + a/e/d 小调、全到十六分音符（含附点）与 3:2 三连音。
  *
  * 设计取舍：
  *  - **不引第三方 XML 库**。主项目只有 3 个运行期依赖，这里用 120 行的
  *    极简解析器换掉 sax/xmldom；它只认元素/属性/文本/实体/注释/CDATA，
  *    对 MusicXML 足够，出问题会带偏移量报错。
- *  - **超纲一律报错，不静默降级**。三连音、跨小节连线、6/8、非常用调号
- *    这些「改成近似值听感就变了」的情况必须让作者知道，否则会产出一份
- *    看起来成功、实际弹错的编配。
+ *  - **超纲一律报错，不静默降级**。5:4 等非三连音连音符、跨小节三连音、
+ *    非常用调号这些「改成近似值听感就变了」的情况必须让作者知道，否则会
+ *    产出一份看起来成功、实际弹错的编配。
  *  - **小节内能无损合并的连线就合并**（两个四分连成二分），合并后仍无法
  *    用单个时值表示时才报错；跨小节的连线必然无法表示，直接报错。
  *  - 输出的 `Score` 没有指法，交给 `annotateScore()` 补；导入器不猜指法。
@@ -251,14 +256,40 @@ const REST_DURATION_BY_BEATS: ReadonlyArray<readonly [number, Duration]> = [
   [0.25, "16r"],
 ];
 
+/** MusicXML `<type>` → Score 的写谱时值。三连音必须靠它拿到基础时值。 */
+const TYPE_TO_DURATION: Record<string, Duration> = {
+  whole: "w",
+  half: "h",
+  quarter: "q",
+  eighth: "8",
+  "16th": "16",
+};
+
+const REST_FOR: Partial<Record<Duration, Duration>> = {
+  w: "wr",
+  h: "hr",
+  q: "qr",
+  "8": "8r",
+  "16": "16r",
+};
+
 const STEPS: ReadonlySet<string> = new Set(["C", "D", "E", "F", "G", "A", "B"]);
 
-const FIFTHS_TO_KEY: Record<number, KeySignature> = {
+type KeyMode = "major" | "minor";
+
+const MAJOR_FIFTHS_TO_KEY: Record<number, KeySignature> = {
   [-2]: "Bb",
   [-1]: "F",
   0: "C",
   1: "G",
   2: "D",
+};
+
+/** 小调只支持 a/e/d；fifths 与大调共用（0=C/Am，1=G/Em，-1=F/Dm）。 */
+const MINOR_FIFTHS_TO_KEY: Record<number, KeySignature> = {
+  [-1]: "Dm",
+  0: "Am",
+  1: "Em",
 };
 
 const KEY_NAMES: ReadonlyArray<string> = [
@@ -279,6 +310,24 @@ const KEY_NAMES: ReadonlyArray<string> = [
   "C#",
 ];
 
+const MINOR_KEY_NAMES: ReadonlyArray<string> = [
+  "Abm",
+  "Ebm",
+  "Bbm",
+  "Fm",
+  "Cm",
+  "Gm",
+  "Dm",
+  "Am",
+  "Em",
+  "Bm",
+  "F#m",
+  "C#m",
+  "G#m",
+  "D#m",
+  "A#m",
+];
+
 const EPSILON = 1e-6;
 
 /** 把 `duration / divisions` 的浮点噪声收回到 1/64 拍栅格上，其余原样保留。 */
@@ -292,8 +341,9 @@ function formatBeats(beats: number): string {
   return Number.isInteger(beats) ? String(beats) : String(Math.round(beats * 1000) / 1000);
 }
 
-function keyNameOf(fifths: number): string {
-  return KEY_NAMES[fifths + 7] ?? `fifths=${fifths}`;
+function keyNameOf(fifths: number, mode: KeyMode = "major"): string {
+  const names = mode === "minor" ? MINOR_KEY_NAMES : KEY_NAMES;
+  return names[fifths + 7] ?? `fifths=${fifths}`;
 }
 
 function durationForBeats(beats: number): Duration | null {
@@ -301,6 +351,39 @@ function durationForBeats(beats: number): Duration | null {
     if (Math.abs(beats - value) < EPSILON) return duration;
   }
   return null;
+}
+
+/** 从 `<type>` 读基础时值；三连音必须带它，否则无法知道「三个几分音符」。 */
+function durationFromType(note: XmlNode, label: string, errors: string[]): Duration | null {
+  const type = child(note, "type")?.text.trim();
+  if (!type) {
+    errors.push(`${label}：三连音缺少 <type>，无法确定基础时值`);
+    return null;
+  }
+  const duration = TYPE_TO_DURATION[type];
+  if (!duration) {
+    errors.push(`${label}：三连音的基础时值 <type>${type}</type> 暂不支持（只支持全/二分/四分/八分/十六分）`);
+    return null;
+  }
+  return duration;
+}
+
+/** `<time-modification>` 的 3:2 检查；返回 null 表示不是三连音。 */
+function tripletOf(note: XmlNode, label: string, errors: string[]): { base: Duration } | null {
+  const node = child(note, "time-modification");
+  if (!node) return null;
+  const actual = Number(child(node, "actual-notes")?.text.trim());
+  const normal = Number(child(node, "normal-notes")?.text.trim());
+  if (actual !== 3 || normal !== 2) {
+    errors.push(`${label}：只支持 3:2 三连音，当前是 ${actual || "?"}:${normal || "?"}`);
+    return null;
+  }
+  if (child(note, "dot")) {
+    errors.push(`${label}：三连音里的附点时值暂不支持`);
+    return null;
+  }
+  const base = durationFromType(note, label, errors);
+  return base ? { base } : null;
 }
 
 function restDurationsFor(beats: number): { durations: Duration[]; remainder: number } {
@@ -322,12 +405,17 @@ function samePitch(left: Pitch, right: Pitch): boolean {
 /** 一次 `<note>` 解析出来的中间结果。 */
 type RawGroup = {
   onset: number;
+  /** 实际拍数（三连音已按 2/3 折算）。 */
   beats: number;
   pitches: Pitch[];
   voice: number;
   staff: number;
   tieStart: boolean;
   tieStop: boolean;
+  /** 三连音的写谱基础时值；非三连音为空。 */
+  duration?: Duration;
+  /** 三连音组 id；同一组连续 3 个音共用。 */
+  tuplet?: string;
 };
 
 type PartState = {
@@ -335,6 +423,7 @@ type PartState = {
   beats: number;
   beatValue: number;
   fifths: number;
+  keyMode: KeyMode;
   staves: number;
   clefs: Map<number, Clef>;
   tempo?: number;
@@ -345,10 +434,21 @@ type ParsedPart = {
   clefs: Clef[];
   /** 每小节的所有音组（含休止符组）。 */
   measures: RawGroup[][];
+  /** 每小节的反复/导航记号，与 `measures` 等长。 */
+  marks: RawMeasureMarks[];
   keyFifths: number;
+  keyMode: KeyMode;
   meter: { beats: number; beatValue: number };
   /** MusicXML 里的 `<sound tempo>`；没有标记就是 undefined。 */
   tempo?: number;
+};
+
+/** `<barline>` / `<direction>` / `<sound>` 里与结构有关的记号。 */
+type RawMeasureMarks = {
+  repeatStart?: boolean;
+  /** `:|` 的总演奏次数（默认 2）。 */
+  repeatEnd?: number;
+  navigation?: NavigationKind[];
 };
 
 function tieFlags(note: XmlNode): { start: boolean; stop: boolean } {
@@ -363,6 +463,59 @@ function tieFlags(note: XmlNode): { start: boolean; stop: boolean } {
     childrenNamed(notations, "tied").forEach(collect);
   }
   return { start, stop };
+}
+
+function addNavigation(mark: RawMeasureMarks, kind: NavigationKind): void {
+  const list = mark.navigation ?? [];
+  if (!list.includes(kind)) list.push(kind);
+  mark.navigation = list;
+}
+
+/** `<barline>`：反复线、Segno/Coda/Fine 图形。 */
+function readBarline(node: XmlNode, mark: RawMeasureMarks): void {
+  for (const item of node.children) {
+    if (item.name === "repeat") {
+      const direction = item.attrs.direction;
+      if (direction === "forward") {
+        mark.repeatStart = true;
+      } else if (direction === "backward") {
+        const times = Number(item.attrs.times);
+        mark.repeatEnd = Number.isFinite(times) && times >= 2 ? Math.floor(times) : 2;
+      }
+    } else if (item.name === "segno") {
+      addNavigation(mark, "segno");
+    } else if (item.name === "coda") {
+      addNavigation(mark, "coda");
+    } else if (item.name === "fine") {
+      addNavigation(mark, "fine");
+    }
+  }
+}
+
+/** `<direction>`：图形记号与 `<words>` 里的 D.C./D.S. 文本。 */
+function readDirection(node: XmlNode, mark: RawMeasureMarks): void {
+  const sound = child(node, "sound");
+  if (sound) readSound(sound.attrs, mark);
+  for (const type of childrenNamed(node, "direction-type")) {
+    for (const item of type.children) {
+      if (item.name === "segno") addNavigation(mark, "segno");
+      else if (item.name === "coda") addNavigation(mark, "coda");
+      else if (item.name === "fine") addNavigation(mark, "fine");
+      else if (item.name === "words") {
+        const text = item.text.trim().toUpperCase();
+        if (/D\.?\s*S\.?/.test(text)) addNavigation(mark, "ds");
+        else if (/D\.?\s*C\.?/.test(text)) addNavigation(mark, "dc");
+      }
+    }
+  }
+}
+
+/** `<sound>` 上的播放控制属性。 */
+function readSound(attrs: Record<string, string>, mark: RawMeasureMarks): void {
+  if (attrs.dacapo === "yes") addNavigation(mark, "dc");
+  if (attrs.dalsegno) addNavigation(mark, "ds");
+  if (attrs.fine === "yes") addNavigation(mark, "fine");
+  if (attrs.tocoda) addNavigation(mark, "to-coda");
 }
 
 function parsePitches(note: XmlNode, label: string, errors: string[]): Pitch[] {
@@ -406,12 +559,16 @@ function applyAttributes(
   const keyNode = child(node, "key");
   if (keyNode) {
     const fifths = numberIn(keyNode, "fifths") ?? 0;
-    if (measureIndex > 0 && fifths !== state.fifths) {
+    const modeText = textIn(keyNode, "mode");
+    // 缺省 <mode> 按大调处理；后续小节没写 mode 时沿用当前调式。
+    const keyMode: KeyMode = modeText === "minor" ? "minor" : modeText === "major" ? "major" : state.keyMode;
+    if (measureIndex > 0 && (fifths !== state.fifths || keyMode !== state.keyMode)) {
       warnings.push(
         `${label}：调号在第 ${measureIndex + 1} 小节变化，Score 全曲只有一个调号，已按首次调号处理`,
       );
     }
     state.fifths = fifths;
+    state.keyMode = keyMode;
   }
 
   const timeNode = child(node, "time");
@@ -451,39 +608,52 @@ function parsePart(
   partNode: XmlNode,
   errors: string[],
   warnings: string[],
+  partIndex: number,
 ): ParsedPart {
   const state: PartState = {
     divisions: 1,
     beats: 4,
     beatValue: 4,
     fifths: 0,
+    keyMode: "major",
     staves: 1,
     clefs: new Map([[1, "treble"]]),
   };
 
   const measures: RawGroup[][] = [];
+  const marks: RawMeasureMarks[] = [];
   let maxStaff = 1;
   let graceNotes = 0;
   let cueNotes = 0;
+  /** 三连音组 id 计数器；整份 part 内唯一。 */
+  let tupletCounter = 0;
 
   const measureNodes = childrenNamed(partNode, "measure");
   measureNodes.forEach((measureNode, measureIndex) => {
     const label = `第 ${measureIndex + 1} 小节`;
     const groups: RawGroup[] = [];
+    const mark: RawMeasureMarks = {};
     const lastByStaff = new Map<number, RawGroup>();
+    /** 本小节还没凑满 3 个音的三连音组（按 staff-voice 分开）。 */
+    const openTuplets = new Map<string, { id: string; count: number }>();
     let cursor = 0;
 
     for (const node of measureNode.children) {
       switch (node.name) {
+        case "barline":
+          readBarline(node, mark);
+          break;
         case "attributes":
           applyAttributes(node, state, measureIndex, label, errors, warnings);
           break;
         case "sound": {
+          readSound(node.attrs, mark);
           const tempo = Number(node.attrs.tempo);
           if (Number.isFinite(tempo) && tempo > 0) state.tempo = tempo;
           break;
         }
         case "direction": {
+          readDirection(node, mark);
           const sound = child(node, "sound");
           const tempo = Number(sound?.attrs.tempo);
           if (Number.isFinite(tempo) && tempo > 0) state.tempo = tempo;
@@ -515,10 +685,6 @@ function parsePart(
             errors.push(`${label}：note 缺少 <duration>，无法确定时值`);
             break;
           }
-          if (child(node, "time-modification")) {
-            errors.push(`${label}：三连音等连音符暂不支持，请先在 MuseScore 里改成普通时值`);
-            break;
-          }
           const beats = roundBeats(durationDivisions / state.divisions);
           if (!(beats > 0)) {
             errors.push(`${label}：时值 ${formatBeats(beats)} 拍必须大于 0`);
@@ -545,6 +711,49 @@ function parsePart(
             break;
           }
 
+          const tmNode = child(node, "time-modification");
+          const triplet = tmNode ? tripletOf(node, label, errors) : null;
+          if (tmNode && !triplet) break;
+
+          const tupletKey = `${staff}-${voice}`;
+          let duration: Duration | undefined;
+          let tuplet: string | undefined;
+          if (triplet) {
+            const expected = DURATION_BEATS[triplet.base] * (2 / 3);
+            if (Math.abs(beats - expected) > EPSILON) {
+              errors.push(
+                `${label}：三连音时值 ${formatBeats(beats)} 拍与基础时值 ${triplet.base}（应为 ${formatBeats(expected)} 拍）不一致`,
+              );
+              break;
+            }
+            if (isRest) {
+              duration = REST_FOR[triplet.base];
+              if (!duration) {
+                errors.push(`${label}：三连音休止符的基础时值 ${triplet.base} 暂不支持`);
+                break;
+              }
+            } else {
+              duration = triplet.base;
+            }
+            let open = openTuplets.get(tupletKey);
+            if (!open) {
+              open = { id: `p${partIndex + 1}-t${tupletCounter + 1}`, count: 0 };
+              tupletCounter += 1;
+              openTuplets.set(tupletKey, open);
+            }
+            open.count += 1;
+            tuplet = open.id;
+            if (open.count >= 3) openTuplets.delete(tupletKey);
+          } else {
+            const open = openTuplets.get(tupletKey);
+            if (open) {
+              errors.push(
+                `${label}：三连音组不完整（应有 3 个音，实际 ${open.count} 个），三连音不能跨小节或夹普通音符`,
+              );
+              openTuplets.delete(tupletKey);
+            }
+          }
+
           const group: RawGroup = {
             onset: cursor,
             beats,
@@ -553,6 +762,8 @@ function parsePart(
             staff,
             tieStart: start,
             tieStop: stop,
+            ...(duration ? { duration } : {}),
+            ...(tuplet ? { tuplet } : {}),
           };
           groups.push(group);
           lastByStaff.set(staff, group);
@@ -564,7 +775,15 @@ function parsePart(
       }
     }
 
+    for (const [key, open] of openTuplets) {
+      const [staff, voice] = key.split("-");
+      errors.push(
+        `${label}：三连音组不完整（应有 3 个音，实际 ${open.count} 个；谱表 ${staff} 声部 ${voice}），三连音不能跨小节`,
+      );
+    }
+
     measures.push(groups);
+    marks.push(mark);
   });
 
   if (graceNotes > 0) warnings.push(`已跳过 ${graceNotes} 个装饰音（不参与本工具的时值模型）`);
@@ -579,7 +798,9 @@ function parsePart(
     staffCount: Math.max(state.staves, maxStaff),
     clefs,
     measures,
+    marks,
     keyFifths: state.fifths,
+    keyMode: state.keyMode,
     meter: { beats: state.beats, beatValue: state.beatValue },
     tempo: state.tempo,
   };
@@ -664,14 +885,30 @@ function buildMeasures(
         continue;
       }
       if (group.pitches.length === 0) {
-        if (!pushRests(group.beats, "休止符")) break;
+        if (group.tuplet) {
+          // 三连音休止符的 1/3 拍无法用普通休止符拼出来，直接按基础时值
+          // 写一个带组 id 的休止符，渲染层会把它和同组音符一起交给 Tuplet。
+          if (!group.duration) {
+            ctx.errors.push(`${label}：三连音休止符缺少基础时值`);
+            break;
+          }
+          counter += 1;
+          notes.push({
+            id: `${ctx.hand.toLowerCase()}-${measureIndex + 1}-${counter}`,
+            pitches: [],
+            duration: group.duration,
+            tuplet: group.tuplet,
+          });
+        } else if (!pushRests(group.beats, "休止符")) {
+          break;
+        }
         pending = null;
       } else {
-        const duration = durationForBeats(group.beats);
+        const duration = group.duration ?? durationForBeats(group.beats);
         if (!duration) {
           ctx.errors.push(
             `${label}：时值 ${formatBeats(group.beats)} 拍无法用 Score 的时值表示` +
-              `（支持 4/3/2/1.5/1/0.5/0.25 拍；三连音、32 分音符请先在 MuseScore 里改写）`,
+              `（支持 4/3/2/1.5/1/0.5/0.25 拍；32 分音符请先在 MuseScore 里改写）`,
           );
           break;
         }
@@ -684,6 +921,7 @@ function buildMeasures(
           id: `${ctx.hand.toLowerCase()}-${measureIndex + 1}-${counter}`,
           pitches: group.pitches,
           duration,
+          ...(group.tuplet ? { tuplet: group.tuplet } : {}),
           ...(tie ? { tie } : {}),
         });
       }
@@ -752,6 +990,54 @@ function tieMarkFor(
 }
 
 /**
+ * 把每个 part 的小节记号整理成 `Score.repeats` / `Score.navigation`。
+ *
+ * 反复用栈配对，所以嵌套的 `|: |: :| :|` 也能导入；没配上的端点直接报错，
+ * 不猜作者想从哪里反复。多个 part 里的同名记号去重。
+ */
+function collectStructure(
+  parts: ParsedPart[],
+  errors: string[],
+): { repeats: RepeatSpan[]; navigation: NavigationMark[] } {
+  const repeats: RepeatSpan[] = [];
+  const navigation: NavigationMark[] = [];
+  const seenRepeat = new Set<string>();
+  const seenNavigation = new Set<string>();
+
+  for (const part of parts) {
+    const stack: number[] = [];
+    part.marks.forEach((mark, index) => {
+      if (mark.repeatStart) stack.push(index);
+      if (mark.repeatEnd !== undefined) {
+        const from = stack.pop();
+        if (from === undefined) {
+          errors.push(`第 ${index + 1} 小节有反复终点 :|，但没有对应的起点 |:`);
+        } else {
+          const span: RepeatSpan = { from, to: index };
+          if (mark.repeatEnd !== 2) span.times = mark.repeatEnd;
+          const key = `${from}-${index}-${span.times ?? 2}`;
+          if (!seenRepeat.has(key)) {
+            seenRepeat.add(key);
+            repeats.push(span);
+          }
+        }
+      }
+      for (const kind of mark.navigation ?? []) {
+        const key = `${index}-${kind}`;
+        if (seenNavigation.has(key)) continue;
+        seenNavigation.add(key);
+        navigation.push({ at: index, kind });
+      }
+    });
+    for (const from of stack) {
+      errors.push(`第 ${from + 1} 小节的反复起点 |: 没有对应的终点 :|`);
+    }
+  }
+
+  return { repeats, navigation };
+}
+
+/**
  * 把 MusicXML 文本转成 `Score`。
  *
  * 返回的 `ok=false` 时 `errors` 里是必须修的问题（不是「部分成功」），
@@ -786,17 +1072,18 @@ export function importMusicXml(text: string, options: MusicXmlOptions = {}): Mus
   }
 
   const parts: ParsedPart[] = [];
-  partNodes.forEach((partNode) => {
-    parts.push(parsePart(partNode, errors, warnings));
+  partNodes.forEach((partNode, partIndex) => {
+    parts.push(parsePart(partNode, errors, warnings, partIndex));
   });
 
   // 调号/拍号必须全曲一致（Score 只有一个）。
   const keyFifths = parts[0].keyFifths;
+  const keyMode = parts[0].keyMode;
   const meter = parts[0].meter;
   for (const part of parts.slice(1)) {
-    if (part.keyFifths !== keyFifths) {
+    if (part.keyFifths !== keyFifths || part.keyMode !== keyMode) {
       errors.push(
-        `各声部调号不一致（${keyNameOf(keyFifths)} vs ${keyNameOf(part.keyFifths)}），Score 只支持一个调号`,
+        `各声部调号不一致（${keyNameOf(keyFifths, keyMode)} ${keyMode === "minor" ? "小调" : "大调"} vs ${keyNameOf(part.keyFifths, part.keyMode)} ${part.keyMode === "minor" ? "小调" : "大调"}），Score 只支持一个调号`,
       );
     }
     if (part.meter.beats !== meter.beats || part.meter.beatValue !== meter.beatValue) {
@@ -806,15 +1093,23 @@ export function importMusicXml(text: string, options: MusicXmlOptions = {}): Mus
     }
   }
 
-  if (meter.beatValue !== 4 || (meter.beats !== 3 && meter.beats !== 4)) {
+  const meterSupported =
+    (meter.beatValue === 4 && (meter.beats === 3 || meter.beats === 4)) ||
+    (meter.beatValue === 8 && meter.beats === 6);
+  if (!meterSupported) {
     errors.push(
-      `拍号 ${meter.beats}/${meter.beatValue} 不在 Score 支持范围（只有 4/4、3/4）`,
+      `拍号 ${meter.beats}/${meter.beatValue} 不在 Score 支持范围（只有 4/4、3/4、6/8）`,
     );
   }
-  const keySignature = FIFTHS_TO_KEY[keyFifths];
+  const scoreMeter: Score["meter"] = meterSupported
+    ? { beats: meter.beats as 3 | 4 | 6, beatValue: meter.beatValue as 4 | 8 }
+    : { beats: 4, beatValue: 4 };
+  const keySignature = keyMode === "minor"
+    ? MINOR_FIFTHS_TO_KEY[keyFifths]
+    : MAJOR_FIFTHS_TO_KEY[keyFifths];
   if (!keySignature) {
     errors.push(
-      `调号 ${keyNameOf(keyFifths)}（fifths=${keyFifths}）不在 Score 支持范围（C/F/G/D/♭B）`,
+      `调号 ${keyNameOf(keyFifths, keyMode)}（fifths=${keyFifths}，${keyMode === "minor" ? "小调" : "大调"}）不在 Score 支持范围（C/F/G/D/♭B 大调、a/e/d 小调）`,
     );
   }
 
@@ -830,11 +1125,18 @@ export function importMusicXml(text: string, options: MusicXmlOptions = {}): Mus
   const firstClef = candidates[0] ? candidates[0].part.clefs[candidates[0].staff - 1] ?? "treble" : "treble";
   const hands: Hand[] = candidates.length <= 1 ? [firstClef === "bass" ? "LH" : "RH"] : ["RH", "LH"];
 
-  const meterBeats = meter.beats === 3 || meter.beats === 4 ? meter.beats : 4;
+  const meterBeats = (scoreMeter.beats * 4) / scoreMeter.beatValue;
   const bpm = options.bpm ?? parts[0].tempo ?? 72;
   if (options.bpm === undefined && parts[0].tempo === undefined) {
     warnings.push("MusicXML 里没有 tempo 标记，已用默认 72 BPM，请用 --bpm 覆盖");
   }
+
+  // 反复/导航是整份谱的结构，两只手共用一组小节号；多个 part 里的同名
+  // 记号去重，避免大谱表导出两份。
+  const { repeats, navigation } = collectStructure(
+    candidates.slice(0, 2).map((candidate) => candidate.part),
+    errors,
+  );
 
   const staves: Partial<Record<Hand, Stave>> = {};
   const usedHands: Hand[] = [];
@@ -955,15 +1257,18 @@ export function importMusicXml(text: string, options: MusicXmlOptions = {}): Mus
     id: options.id ?? "score.imported",
     mode: "repertoire",
     level: options.level ?? 3,
-    meter: { beats: meterBeats, beatValue: 4 },
+    meter: scoreMeter,
     keySignature: keySignature ?? "C",
     hands: usedHands,
     bpm,
     staves,
     ...(pickup === undefined ? {} : { pickup }),
+    ...(repeats.length > 0 ? { repeats } : {}),
+    ...(navigation.length > 0 ? { navigation } : {}),
   };
 
   if (errors.length === 0) {
+    errors.push(...repeatErrors(score));
     const minLevel = minLevelForScore(score);
     if (minLevel >= 7) {
       warnings.push(

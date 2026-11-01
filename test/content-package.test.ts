@@ -46,6 +46,14 @@ describe("示例曲目包", () => {
     expect(rated.level).toBeLessThanOrEqual(manifest.difficulty!.level);
   });
 
+  it("反复段落写不闭合时内容 QA 直接报错", () => {
+    const manifest = parseManifest(manifestText, knownSkillIds()).manifest!;
+    const broken: Score = { ...score, repeats: [{ from: 0, to: 99 }] };
+    const result = validateSongContent(broken, manifest);
+    expect(result.ok).toBe(false);
+    expect(result.errors.some((text) => text.includes("超出全曲"))).toBe(true);
+  });
+
   it("skillDeps 与引擎识别的技能一致", () => {
     const manifest = parseManifest(manifestText, knownSkillIds()).manifest!;
     expect([...requiredSkillsForScore(score)].sort()).toEqual([...manifest.skillDeps].sort());

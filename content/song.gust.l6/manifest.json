@@ -1,0 +1,40 @@
+{
+  "schemaVersion": 1,
+  "id": "pkg.gust.full",
+  "songId": "song.gust",
+  "arrangementId": "arr.gust.full",
+  "songTitle": "疾风",
+  "composer": "Piano Buddy",
+  "name": "疾风 · L6 跑动编配",
+  "type": "song",
+  "version": "1.0.0",
+  "minAppVersion": "2.0.0",
+  "skillDeps": [
+    "chord.triad",
+    "clef.bass",
+    "clef.treble",
+    "hands.alternate",
+    "hands.both",
+    "hands.together",
+    "key.c",
+    "pos.expand",
+    "pos.five",
+    "pos.leap",
+    "pos.shift",
+    "rhythm.sixteenth"
+  ],
+  "difficulty": {
+    "level": 6,
+    "bpm": 52,
+    "repeat": 0.3,
+    "len": 12
+  },
+  "assets": [
+    "content/score.json"
+  ],
+  "license": "original",
+  "rights": {
+    "type": "original",
+    "attribution": "Piano Buddy 教学编配（原创，4/4 拍，右手十六分音符跑动与六度/八度跳进，左手分解和弦换位）"
+  }
+}

@@ -1,5 +1,5 @@
 import type { Score } from "./types";
-import { DURATION_BEATS } from "./vocabulary";
+import { meterQuarterBeats, noteBeats } from "./vocabulary";
 
 /**
  * 弱起小节（anacrusis）的口径唯一来源。
@@ -10,22 +10,24 @@ import { DURATION_BEATS } from "./vocabulary";
  * MusicXML 拿到的也是这个数。
  *
  * 事件流仍然从第 0 拍开始——弱起的第一个音就是第 0 拍，不需要偏移。
- * 会受影响的是**小节边界**：第二小节从第 `pickup` 拍开始，不是从
- * `meter.beats` 开始。所以凡是要把小节号和拍坐标互相换算的地方，一律走
+ * 会受影响的是**小节边界**：第二小节从第 `pickup` 拍开始，不是从整小节
+ * 拍数开始。所以凡是要把小节号和拍坐标互相换算的地方，一律走
  * 这里的 `measureBeatStarts()` / `barAtBeat()`，别拿 `beat / meter.beats` 硬除。
+ *
+ * 拍数一律是**四分音符单位**；6/8 的一整小节是 3 拍，不是 6 拍。
  */
 
-/** 拍的最小粒度：十六分音符。弱起拍数必须是它的整数倍。 */
-const STEP = 0.25;
+/** 拍的最小粒度：十六分音符与三连音都落在这个 1/12 栅格上。 */
+const STEP = 1 / 12;
 
 /** 首小节的实际拍数；没有弱起时就是一个整小节。 */
 export function pickupBeats(score: Score): number {
-  return score.pickup ?? score.meter.beats;
+  return score.pickup ?? meterQuarterBeats(score.meter);
 }
 
 /** 第 index 小节应有的拍数（只有首小节可能不满）。 */
 export function measureBudget(score: Score, index: number): number {
-  return index === 0 ? pickupBeats(score) : score.meter.beats;
+  return index === 0 ? pickupBeats(score) : meterQuarterBeats(score.meter);
 }
 
 /** 每小节的起始拍（0 起算，长度等于小节数）。 */
@@ -53,20 +55,18 @@ export function pickupErrors(score: Score): string[] {
   if (!Number.isFinite(pickup) || pickup <= 0) {
     return [`pickup 必须是正数（首小节拍数），实际是 ${pickup}`];
   }
-  if (pickup >= score.meter.beats) {
-    return [`pickup=${pickup} 不小于每小节 ${score.meter.beats} 拍，弱起小节必须比整小节短`];
+  const budget = meterQuarterBeats(score.meter);
+  if (pickup >= budget) {
+    return [`pickup=${pickup} 不小于每小节 ${formatBeats(budget)} 拍，弱起小节必须比整小节短`];
   }
   if (Math.abs(pickup / STEP - Math.round(pickup / STEP)) > 1e-6) {
-    errors.push(`pickup=${pickup} 不是十六分音符的整数倍，谱面无法记谱`);
+    errors.push(`pickup=${pickup} 不是十六分音符的整数倍（三连音按 1/3 拍栅格也允许），谱面无法记谱`);
   }
   // 首小节的实际时值必须与声明的 pickup 一致，否则「声明弱起」只是标签。
   for (const hand of score.hands) {
     const measure = score.staves[hand]?.measures[0];
     if (!measure) continue;
-    const used = measure.notes.reduce(
-      (sum, note) => sum + (DURATION_BEATS[note.duration] ?? 0),
-      0,
-    );
+    const used = measure.notes.reduce((sum, note) => sum + noteBeats(note), 0);
     if (Math.abs(used - pickup) > 1e-6) {
       errors.push(`首小节实际 ${formatBeats(used)} 拍，与 pickup=${pickup} 不一致（${hand}）`);
     }

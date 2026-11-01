@@ -1,0 +1,659 @@
+{
+  "id": "score.mist.l6",
+  "mode": "repertoire",
+  "level": 6,
+  "meter": {
+    "beats": 4,
+    "beatValue": 4
+  },
+  "keySignature": "Am",
+  "hands": [
+    "RH",
+    "LH"
+  ],
+  "bpm": 60,
+  "staves": {
+    "RH": {
+      "clef": "treble",
+      "measures": [
+        {
+          "notes": [
+            {
+              "id": "rh-1-1",
+              "pitches": [
+                {
+                  "step": "A",
+                  "octave": 4,
+                  "alteration": 0
+                },
+                {
+                  "step": "C",
+                  "octave": 5,
+                  "alteration": 0
+                },
+                {
+                  "step": "E",
+                  "octave": 5,
+                  "alteration": 0
+                }
+              ],
+              "duration": "h",
+              "fingers": [
+                1,
+                3,
+                5
+              ]
+            },
+            {
+              "id": "rh-1-2",
+              "pitches": [
+                {
+                  "step": "C",
+                  "octave": 5,
+                  "alteration": 0
+                }
+              ],
+              "duration": "q",
+              "fingers": [
+                3
+              ]
+            },
+            {
+              "id": "rh-1-3",
+              "pitches": [
+                {
+                  "step": "B",
+                  "octave": 4,
+                  "alteration": 0
+                }
+              ],
+              "duration": "q",
+              "fingers": [
+                2
+              ]
+            }
+          ]
+        },
+        {
+          "notes": [
+            {
+              "id": "rh-2-1",
+              "pitches": [
+                {
+                  "step": "F",
+                  "octave": 4,
+                  "alteration": 0
+                },
+                {
+                  "step": "A",
+                  "octave": 4,
+                  "alteration": 0
+                },
+                {
+                  "step": "C",
+                  "octave": 5,
+                  "alteration": 0
+                },
+                {
+                  "step": "F",
+                  "octave": 5,
+                  "alteration": 0
+                }
+              ],
+              "duration": "h",
+              "fingers": [
+                1,
+                2,
+                3,
+                5
+              ]
+            },
+            {
+              "id": "rh-2-2",
+              "pitches": [
+                {
+                  "step": "A",
+                  "octave": 4,
+                  "alteration": 0
+                }
+              ],
+              "duration": "q",
+              "fingers": [
+                3
+              ]
+            },
+            {
+              "id": "rh-2-3",
+              "pitches": [
+                {
+                  "step": "G",
+                  "octave": 4,
+                  "alteration": 0
+                }
+              ],
+              "duration": "q",
+              "fingers": [
+                2
+              ]
+            }
+          ]
+        },
+        {
+          "notes": [
+            {
+              "id": "rh-3-1",
+              "pitches": [
+                {
+                  "step": "B",
+                  "octave": 3,
+                  "alteration": 0
+                },
+                {
+                  "step": "D",
+                  "octave": 4,
+                  "alteration": 0
+                },
+                {
+                  "step": "F",
+                  "octave": 4,
+                  "alteration": 0
+                },
+                {
+                  "step": "A",
+                  "octave": 4,
+                  "alteration": 0
+                }
+              ],
+              "duration": "h",
+              "fingers": [
+                1,
+                2,
+                3,
+                5
+              ]
+            },
+            {
+              "id": "rh-3-2",
+              "pitches": [
+                {
+                  "step": "B",
+                  "octave": 4,
+                  "alteration": 0
+                }
+              ],
+              "duration": "q",
+              "fingers": [
+                5
+              ]
+            },
+            {
+              "id": "rh-3-3",
+              "pitches": [
+                {
+                  "step": "A",
+                  "octave": 4,
+                  "alteration": 0
+                }
+              ],
+              "duration": "q",
+              "fingers": [
+                4
+              ]
+            }
+          ]
+        },
+        {
+          "notes": [
+            {
+              "id": "rh-4-1",
+              "pitches": [
+                {
+                  "step": "E",
+                  "octave": 4,
+                  "alteration": 0
+                },
+                {
+                  "step": "G",
+                  "octave": 4,
+                  "alteration": 0
+                },
+                {
+                  "step": "B",
+                  "octave": 4,
+                  "alteration": 0
+                }
+              ],
+              "duration": "h",
+              "fingers": [
+                1,
+                3,
+                5
+              ]
+            },
+            {
+              "id": "rh-4-2",
+              "pitches": [
+                {
+                  "step": "B",
+                  "octave": 4,
+                  "alteration": 0
+                }
+              ],
+              "duration": "q",
+              "fingers": [
+                5
+              ]
+            },
+            {
+              "id": "rh-4-3",
+              "pitches": [
+                {
+                  "step": "G",
+                  "octave": 4,
+                  "alteration": 0
+                }
+              ],
+              "duration": "q",
+              "fingers": [
+                3
+              ]
+            }
+          ]
+        },
+        {
+          "notes": [
+            {
+              "id": "rh-5-1",
+              "pitches": [
+                {
+                  "step": "C",
+                  "octave": 4,
+                  "alteration": 0
+                },
+                {
+                  "step": "E",
+                  "octave": 4,
+                  "alteration": 0
+                },
+                {
+                  "step": "G",
+                  "octave": 4,
+                  "alteration": 0
+                },
+                {
+                  "step": "C",
+                  "octave": 5,
+                  "alteration": 0
+                }
+              ],
+              "duration": "h",
+              "fingers": [
+                1,
+                2,
+                3,
+                5
+              ]
+            },
+            {
+              "id": "rh-5-2",
+              "pitches": [
+                {
+                  "step": "C",
+                  "octave": 5,
+                  "alteration": 0
+                }
+              ],
+              "duration": "q",
+              "fingers": [
+                5
+              ]
+            },
+            {
+              "id": "rh-5-3",
+              "pitches": [
+                {
+                  "step": "B",
+                  "octave": 4,
+                  "alteration": 0
+                }
+              ],
+              "duration": "q",
+              "fingers": [
+                4
+              ]
+            }
+          ]
+        },
+        {
+          "notes": [
+            {
+              "id": "rh-6-1",
+              "pitches": [
+                {
+                  "step": "D",
+                  "octave": 4,
+                  "alteration": 0
+                },
+                {
+                  "step": "F",
+                  "octave": 4,
+                  "alteration": 0
+                },
+                {
+                  "step": "A",
+                  "octave": 4,
+                  "alteration": 0
+                }
+              ],
+              "duration": "h",
+              "fingers": [
+                1,
+                3,
+                5
+              ]
+            },
+            {
+              "id": "rh-6-2",
+              "pitches": [
+                {
+                  "step": "F",
+                  "octave": 4,
+                  "alteration": 0
+                }
+              ],
+              "duration": "q",
+              "fingers": [
+                3
+              ]
+            },
+            {
+              "id": "rh-6-3",
+              "pitches": [
+                {
+                  "step": "A",
+                  "octave": 4,
+                  "alteration": 0
+                }
+              ],
+              "duration": "q",
+              "fingers": [
+                1
+              ]
+            }
+          ]
+        },
+        {
+          "notes": [
+            {
+              "id": "rh-7-1",
+              "pitches": [
+                {
+                  "step": "G",
+                  "octave": 4,
+                  "alteration": 1
+                },
+                {
+                  "step": "B",
+                  "octave": 4,
+                  "alteration": 0
+                },
+                {
+                  "step": "D",
+                  "octave": 5,
+                  "alteration": 0
+                },
+                {
+                  "step": "F",
+                  "octave": 5,
+                  "alteration": 0
+                }
+              ],
+              "duration": "h",
+              "fingers": [
+                1,
+                2,
+                3,
+                5
+              ]
+            },
+            {
+              "id": "rh-7-2",
+              "pitches": [
+                {
+                  "step": "B",
+                  "octave": 4,
+                  "alteration": 0
+                }
+              ],
+              "duration": "q",
+              "fingers": [
+                2
+              ]
+            },
+            {
+              "id": "rh-7-3",
+              "pitches": [
+                {
+                  "step": "A",
+                  "octave": 4,
+                  "alteration": 0
+                }
+              ],
+              "duration": "q",
+              "fingers": [
+                1
+              ]
+            }
+          ]
+        },
+        {
+          "notes": [
+            {
+              "id": "rh-8-1",
+              "pitches": [
+                {
+                  "step": "A",
+                  "octave": 4,
+                  "alteration": 0
+                },
+                {
+                  "step": "C",
+                  "octave": 5,
+                  "alteration": 0
+                },
+                {
+                  "step": "E",
+                  "octave": 5,
+                  "alteration": 0
+                }
+              ],
+              "duration": "h",
+              "fingers": [
+                1,
+                3,
+                5
+              ]
+            },
+            {
+              "id": "rh-8-2",
+              "pitches": [
+                {
+                  "step": "E",
+                  "octave": 5,
+                  "alteration": 0
+                }
+              ],
+              "duration": "q",
+              "fingers": [
+                5
+              ]
+            },
+            {
+              "id": "rh-8-3",
+              "pitches": [
+                {
+                  "step": "A",
+                  "octave": 4,
+                  "alteration": 0
+                }
+              ],
+              "duration": "q",
+              "fingers": [
+                1
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "LH": {
+      "clef": "bass",
+      "measures": [
+        {
+          "notes": [
+            {
+              "id": "lh-1-1",
+              "pitches": [
+                {
+                  "step": "A",
+                  "octave": 3,
+                  "alteration": 0
+                }
+              ],
+              "duration": "w",
+              "fingers": [
+                5
+              ]
+            }
+          ]
+        },
+        {
+          "notes": [
+            {
+              "id": "lh-2-1",
+              "pitches": [
+                {
+                  "step": "F",
+                  "octave": 3,
+                  "alteration": 0
+                }
+              ],
+              "duration": "w",
+              "fingers": [
+                5
+              ]
+            }
+          ]
+        },
+        {
+          "notes": [
+            {
+              "id": "lh-3-1",
+              "pitches": [
+                {
+                  "step": "B",
+                  "octave": 3,
+                  "alteration": 0
+                }
+              ],
+              "duration": "w",
+              "fingers": [
+                5
+              ]
+            }
+          ]
+        },
+        {
+          "notes": [
+            {
+              "id": "lh-4-1",
+              "pitches": [
+                {
+                  "step": "E",
+                  "octave": 3,
+                  "alteration": 0
+                }
+              ],
+              "duration": "w",
+              "fingers": [
+                5
+              ]
+            }
+          ]
+        },
+        {
+          "notes": [
+            {
+              "id": "lh-5-1",
+              "pitches": [
+                {
+                  "step": "C",
+                  "octave": 4,
+                  "alteration": 0
+                }
+              ],
+              "duration": "w",
+              "fingers": [
+                5
+              ]
+            }
+          ]
+        },
+        {
+          "notes": [
+            {
+              "id": "lh-6-1",
+              "pitches": [
+                {
+                  "step": "D",
+                  "octave": 3,
+                  "alteration": 0
+                }
+              ],
+              "duration": "w",
+              "fingers": [
+                5
+              ]
+            }
+          ]
+        },
+        {
+          "notes": [
+            {
+              "id": "lh-7-1",
+              "pitches": [
+                {
+                  "step": "G",
+                  "octave": 3,
+                  "alteration": 0
+                }
+              ],
+              "duration": "w",
+              "fingers": [
+                5
+              ]
+            }
+          ]
+        },
+        {
+          "notes": [
+            {
+              "id": "lh-8-1",
+              "pitches": [
+                {
+                  "step": "A",
+                  "octave": 3,
+                  "alteration": 0
+                }
+              ],
+              "duration": "w",
+              "fingers": [
+                5
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  }
+}

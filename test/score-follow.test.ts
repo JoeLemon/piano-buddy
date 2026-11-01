@@ -122,6 +122,37 @@ describe("ScoreFollow", () => {
     expect(labels).toEqual(["C+1", "D"]);
   });
 
+  it("widens the beat lane for sixteenth notes so note names stay readable", async () => {
+    // 一拍四个十六分：仍按 44px/拍画，相邻音名只隔 11px，会和和弦的「+1」叠住。
+    const dense: Score = {
+      ...SCORE,
+      id: "follow-dense",
+      hands: ["RH"],
+      staves: {
+        RH: {
+          clef: "treble",
+          measures: [
+            {
+              notes: [
+                { id: "dense-0", pitches: [{ step: "C", octave: 4, alteration: 0 }], duration: "16" },
+                { id: "dense-1", pitches: [{ step: "D", octave: 4, alteration: 0 }], duration: "16" },
+                { id: "dense-2", pitches: [{ step: "E", octave: 4, alteration: 0 }], duration: "16" },
+                { id: "dense-3", pitches: [{ step: "F", octave: 4, alteration: 0 }], duration: "16" },
+              ],
+            },
+          ],
+        },
+      },
+    };
+
+    const { wrapper } = await setup(dense);
+    const grid = wrapper.get("[data-test=t-grid]").element as HTMLElement;
+
+    // 最小间隔 0.25 拍，按 24px/槽位算出来是 96px/拍。
+    expect(grid.style.getPropertyValue("--beat-w")).toBe("96px");
+    expect(wrapper.findAll("[data-test=t-grid] .note")).toHaveLength(4);
+  });
+
   it("asks for both hands on the same beat instead of advancing on one note", async () => {
     const { wrapper, press } = await setup();
 

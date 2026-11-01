@@ -3,6 +3,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue"
 import { audioAvailable, createPreviewPlayer, type PreviewPlayer } from "../audio/preview";
 import type { LessonId, Profile } from "../domain/profile";
 import { markSegmentFollowed } from "../domain/profile";
+import { recordGapAttempt } from "../domain/metrics";
 import { routeForSkill, type SkillRoute } from "../domain/skillRoutes";
 import { scoreSegments, segmentBeatRange, sliceScore } from "../domain/sliceScore";
 import { flattenScore } from "../domain/timeline";
@@ -12,18 +13,28 @@ import { renderGrandScore, renderScore } from "../notation/renderScore";
 import { L3_PREP_LESSONS } from "../practice";
 import {
   SKILL_BY_ID,
+  assessmentKey,
+  assessmentsForSong,
+  buildRepertoireAssessment,
+  catalogFromInstalled,
   estimatePracticeMinutes,
   masteredSkillIds,
+  mergeCatalogs,
   migrateProfile,
   missingSkillOrder,
   missingSkills,
   practiceEvidence,
   rateScore,
   recordFollowPractice,
+  recordRepertoireAssessment,
   requiredSkillsForScore,
+  scoreFromPackage,
   type Catalog,
   type CatalogArrangement,
   type DifficultyVector,
+  type InstalledPackage,
+  type RepertoireAssessment,
+  type RepertoireSegmentResult,
   type Skill,
   type SkillMastery,
 } from "../repertoire";
@@ -45,6 +56,8 @@ const manifestSources = import.meta.glob("../../content/song.*/manifest.json", {
 
 const props = defineProps<{
   profile: Profile;
+  /** 运行时安装的外部曲库包；与内置 content/catalog.json 合并展示。 */
+  installedPackages?: readonly InstalledPackage[];
 }>();
 
 const emit = defineEmits<{
@@ -54,25 +67,91 @@ const emit = defineEmits<{
   /** L4 预备关在乐理练习页里，带关卡 id 直达。 */
   "open-stage": [stageId: string];
   "update-profile": [profile: Profile];
+  /** 一整首曲子的分段评测已收齐（无论成绩是否比上次好）。 */
+  completed: [];
 }>();
 
-const catalog = parseCatalog(catalogRaw);
-const scores = loadScores(scoreSources, manifestSources);
-const songs = computed(() => catalog.songs);
+const bundledCatalog = parseCatalog(catalogRaw);
+const bundledScores = loadScores(scoreSources, manifestSources);
+const installedCatalog = computed(() => catalogFromInstalled(props.installedPackages ?? []));
+const catalog = computed(() =>
+  mergeCatalogs(bundledCatalog, installedCatalog.value.catalog ?? { version: 1, songs: [] }),
+);
+const scores = computed(() => {
+  const out = new Map(bundledScores);
+  for (const pkg of props.installedPackages ?? []) {
+    const score = scoreFromPackage(pkg);
+    if (score) out.set(pkg.manifest.id, score);
+  }
+  return out;
+});
+const songs = computed(() => catalog.value.songs);
 const allArrangements = computed(() =>
-  catalog.songs.flatMap((song) =>
+  catalog.value.songs.flatMap((song) =>
     song.arrangements.map((arrangement) => ({ song, arrangement })),
   ),
 );
+
+/**
+ * 曲库搜索与筛选。
+ *
+ * 曲库已经到 8 首 10 编配，再靠上下滚动找曲子会越来越慢。这里只做两件
+ * 最常用的事：按曲名/作曲家/编配名搜索，按档位筛选；搜索命中曲名时保留
+ * 该曲的所有编配，命中编配名时才收窄到具体编配，避免「搜欢乐颂却只剩一首」。
+ */
+const query = ref("");
+const levelFilter = ref<number | "all">("all");
+const levelOptions = computed(() =>
+  [...new Set(allArrangements.value.map((item) => item.arrangement.level))].sort((a, b) => a - b),
+);
+
+function arrangementText(song: { title: string; composer?: string }, arrangement: CatalogArrangement) {
+  return [song.title, song.composer ?? "", arrangement.name, arrangement.label, arrangement.arrangementId]
+    .join(" ")
+    .toLowerCase();
+}
+
+const filteredSongs = computed(() => {
+  const needle = query.value.trim().toLowerCase();
+  return songs.value
+    .map((song) => {
+      const songText = [song.title, song.composer ?? ""].join(" ").toLowerCase();
+      const songMatches = needle.length === 0 || songText.includes(needle);
+      const arrangements = song.arrangements.filter((arrangement) => {
+        if (levelFilter.value !== "all" && arrangement.level !== levelFilter.value) return false;
+        return songMatches || arrangementText(song, arrangement).includes(needle);
+      });
+      return { ...song, arrangements };
+    })
+    .filter((song) => song.arrangements.length > 0);
+});
+const filteredArrangements = computed(() =>
+  filteredSongs.value.flatMap((song) =>
+    song.arrangements.map((arrangement) => ({ song, arrangement })),
+  ),
+);
+
+function clearFilters() {
+  query.value = "";
+  levelFilter.value = "all";
+}
+
 const selectedId = ref(allArrangements.value[0]?.arrangement.arrangementId ?? "");
 const selected = computed(
   () =>
-    allArrangements.value.find((item) => item.arrangement.arrangementId === selectedId.value) ??
-    null,
+    filteredArrangements.value.find(
+      (item) => item.arrangement.arrangementId === selectedId.value,
+    ) ?? null,
 );
 const selectedScore = computed<Score | null>(() => {
   const packageId = selected.value?.arrangement.packageId;
-  return packageId ? scores.get(packageId) ?? null : null;
+  return packageId ? scores.value.get(packageId) ?? null : null;
+});
+
+/** 外部包装入或筛选变化后，如果当前选择不可见，落回第一首可见曲目。 */
+watch(filteredArrangements, (items) => {
+  if (items.some((item) => item.arrangement.arrangementId === selectedId.value)) return;
+  selectedId.value = items[0]?.arrangement.arrangementId ?? "";
 });
 
 const staffEl = ref<HTMLElement | null>(null);
@@ -138,10 +217,155 @@ const readiness = computed(() => {
     ? `${base}，其中 ${practicedMissing.value} 项已经练过。`
     : `${base}。`;
 });
+
+/**
+ * 同歌升级：同一首歌换了更高编配，技能账本不重建，旧编配的整曲成绩也保留。
+ *
+ * 曲库页把这两件事说清楚，学生才不会以为换到 L3 就要把 L2 的进度重来一遍。
+ */
+const arrangementLookup = computed(
+  () => new Map(allArrangements.value.map((item) => [item.arrangement.arrangementId, item])),
+);
+const sameSongAssessments = computed(() =>
+  assessmentsForSong(props.profile.repertoireAssessments, selected.value?.song.songId ?? ""),
+);
+const currentAssessment = computed<RepertoireAssessment | null>(() => {
+  const arrangement = selected.value?.arrangement;
+  if (!arrangement) return null;
+  return props.profile.repertoireAssessments?.[assessmentKey(arrangement.arrangementId, hand.value)] ?? null;
+});
+const inheritedAssessment = computed<RepertoireAssessment | null>(() => {
+  const current = selected.value?.arrangement;
+  if (!current) return null;
+  return sameSongAssessments.value
+    .filter((assessment) => {
+      if (assessment.arrangementId === current.arrangementId) return false;
+      const info = arrangementLookup.value.get(assessment.arrangementId);
+      return (info?.arrangement.level ?? 0) < current.level;
+    })
+    .sort((a, b) => {
+      const levelA = arrangementLookup.value.get(a.arrangementId)?.arrangement.level ?? 0;
+      const levelB = arrangementLookup.value.get(b.arrangementId)?.arrangement.level ?? 0;
+      return levelB - levelA;
+    })[0] ?? null;
+});
+const currentAssessmentText = computed(() => {
+  const assessment = currentAssessment.value;
+  if (!assessment) return "";
+  return `本编配${handLabel(assessment.hand)}已评测 ${assessment.segments.length} 段，最好匹配率 ${Math.round(assessment.accuracy * 100)}%。`;
+});
+const inheritanceText = computed(() => {
+  const assessment = inheritedAssessment.value;
+  if (!assessment) return "";
+  const label = arrangementLookup.value.get(assessment.arrangementId)?.arrangement.label
+    ?? assessment.arrangementId;
+  return `同歌升级：${label} 编配已评测 ${assessment.segments.length} 段（${Math.round(assessment.accuracy * 100)}%），已掌握技能与练习证据会保留。`;
+});
+
+function handLabel(value: Hand | "BOTH"): string {
+  return value === "BOTH" ? "双手" : value === "RH" ? "右手" : "左手";
+}
 /** 分段跟弹：两小节一段，避免一上来就是整首。 */
 const segments = computed(() => (selectedScore.value ? scoreSegments(selectedScore.value) : []));
 const selectedSegment = ref(0);
 const activeSegment = computed(() => segments.value[selectedSegment.value] ?? segments.value[0] ?? null);
+
+/**
+ * 整曲评测：按分段顺序把每一段交给 ScoreFollow，收齐后再按音数加权。
+ *
+ * 不把整首谱子塞进一个 ScoreFollow，是因为曲库的判分口径本来就是「这一段
+ * 弹对没有」；分段收结果既能复用同一套判定，也能在结果里指出具体哪一段弱。
+ */
+const assessing = ref(false);
+const assessmentIndex = ref(0);
+/** 重测同一段时靠它换 key，强制 ScoreFollow 重新开始。 */
+const assessmentAttempt = ref(0);
+const assessmentResults = ref<RepertoireSegmentResult[]>([]);
+const assessmentSegment = computed(() => segments.value[assessmentIndex.value] ?? null);
+const assessmentScore = computed(() => {
+  const score = selectedScore.value;
+  const segment = assessmentSegment.value;
+  if (!score || !segment) return null;
+  return sliceScore(score, segment.start, segment.end, hand.value);
+});
+const assessmentResult = computed(
+  () => assessmentResults.value.find((result) => result.index === assessmentIndex.value) ?? null,
+);
+const assessmentComplete = computed(
+  () => segments.value.length > 0 && assessmentResults.value.length === segments.value.length,
+);
+const assessmentTotals = computed(() => {
+  const onCount = assessmentResults.value.reduce((sum, result) => sum + result.onCount, 0);
+  const total = assessmentResults.value.reduce((sum, result) => sum + result.total, 0);
+  return { onCount, total, accuracy: total > 0 ? onCount / total : 0 };
+});
+const assessmentSummary = computed(() => {
+  if (!assessmentComplete.value) {
+    return `已测 ${assessmentResults.value.length} / ${segments.value.length} 段`;
+  }
+  const { onCount, total, accuracy } = assessmentTotals.value;
+  return `整曲匹配率 ${Math.round(accuracy * 100)}%（${onCount} / ${total} 音）`;
+});
+const assessmentProgress = computed(() => {
+  const segment = assessmentSegment.value;
+  if (!segment) return "";
+  return `第 ${assessmentIndex.value + 1} / ${segments.value.length} 段 · ${segment.label}`;
+});
+
+function assessmentResultFor(index: number): RepertoireSegmentResult | null {
+  return assessmentResults.value.find((result) => result.index === index) ?? null;
+}
+
+function assessmentDetail(index: number): string {
+  const result = assessmentResultFor(index);
+  return result
+    ? `${Math.round(result.accuracy * 100)}%（${result.onCount}/${result.total}）`
+    : "";
+}
+
+function clearAssessment() {
+  assessing.value = false;
+  assessmentIndex.value = 0;
+  assessmentAttempt.value = 0;
+  assessmentResults.value = [];
+}
+
+function startAssessment() {
+  if (!selectedScore.value || segments.value.length === 0) return;
+  stopPlayback();
+  assessing.value = true;
+  following.value = true;
+  assessmentIndex.value = 0;
+  assessmentAttempt.value += 1;
+  assessmentResults.value = [];
+  selectedSegment.value = 0;
+  loop.value = false;
+}
+
+function toggleAssessment() {
+  if (assessing.value) {
+    clearAssessment();
+    following.value = false;
+    return;
+  }
+  startAssessment();
+}
+
+function nextAssessment() {
+  if (!assessing.value || !assessmentResult.value) return;
+  if (assessmentIndex.value >= segments.value.length - 1) return;
+  assessmentIndex.value += 1;
+  assessmentAttempt.value += 1;
+  selectedSegment.value = assessmentIndex.value;
+}
+
+function retryAssessmentSegment() {
+  if (!assessing.value) return;
+  assessmentResults.value = assessmentResults.value.filter(
+    (result) => result.index !== assessmentIndex.value,
+  );
+  assessmentAttempt.value += 1;
+}
 
 /**
  * 就地跟弹：切出这一段交给 ScoreFollow，练完还留在曲库。
@@ -153,6 +377,7 @@ const following = ref(false);
 /** A–B 循环：示范播放只在当前分段里反复，听完一遍自动重播。 */
 const loop = ref(false);
 const followScore = computed(() => {
+  if (assessing.value) return assessmentScore.value;
   const score = selectedScore.value;
   const segment = activeSegment.value;
   if (!score || !segment) return null;
@@ -160,10 +385,31 @@ const followScore = computed(() => {
 });
 /** 跟弹沿用示范的速度档：同一个「速度」只管一处，不再多一个滑块。 */
 const followBpm = computed(() => Math.round((selectedScore.value?.bpm ?? 60) * speed.value));
+/** 整曲评测换段/重测都要重建 ScoreFollow；单段跟弹则跟着分段选择走。 */
+const followKey = computed(() =>
+  assessing.value
+    ? `${selectedId.value}-assess-${assessmentIndex.value}-${assessmentAttempt.value}-${hand.value}`
+    : `${selectedId.value}-${selectedSegment.value}-${hand.value}`,
+);
+
+/**
+ * 弱起提示：首小节不满拍，谱面看起来像少了一截。不解释一句，
+ * 用户会以为曲库漏了音，或者跟着示范时找不到第一拍。
+ */
+const pickupHint = computed(() => {
+  const pickup = selectedScore.value?.pickup;
+  if (!pickup) return "";
+  return `弱起 ${pickup} 拍：第 1 小节只有 ${pickup} 拍，不是漏音；跟弹时第一格落在小节末尾。`;
+});
 
 function toggleFollow() {
   // 示范播放与跟弹不共用一条时间线；换谱子后由 staffScore 的 watch 重建播放器。
   stopPlayback();
+  if (assessing.value) {
+    clearAssessment();
+    following.value = false;
+    return;
+  }
   following.value = !following.value;
 }
 
@@ -207,14 +453,14 @@ function toggleLoop() {
 
 /** 跟弹时谱面只画这一段：看到的和判的必须是同一份音符，否则不知道在练哪两小节。 */
 const staffScore = computed(() =>
-  following.value && followScore.value ? followScore.value : selectedScore.value,
+  (following.value || assessing.value) && followScore.value ? followScore.value : selectedScore.value,
 );
 
 /** 缺技能清单里，每一项能落到哪一节具体课；没有课的显示「暂无微课」。 */
 const missingRoutes = computed(() =>
   missing.value.map((skill) => ({ skill, route: routeForSkill(skill.id) })),
 );
-/** L1/L2 有现成微课；L3 有预备课；L4 的分解和弦/手位扩张有乐理练习关。 */
+/** L1/L2 有现成微课；L3–L6 有预备课；只有图谱里还没接课的高级技能才提示「暂无微课」。 */
 const canPracticeBasics = computed(() => missing.value.some((skill) => skill.level <= 2));
 
 /**
@@ -232,7 +478,10 @@ const evidence = computed(() => {
   return out;
 });
 const hasL3Missing = computed(() => missing.value.some((skill) => skill.level === 3));
-const higherMissing = computed(() => missing.value.filter((skill) => skill.level > 3));
+/** L4+ 里真正没有微课的缺口；已经接了乐理预备关的技能不在这里重复。 */
+const unroutedHigherMissing = computed(() =>
+  missing.value.filter((skill) => skill.level > 3 && !routeForSkill(skill.id)),
+);
 const l3CompletedCount = computed(
   () =>
     L3_PREP_LESSONS.filter((lesson) =>
@@ -393,7 +642,10 @@ function paintPlayback(index: number | null) {
 
 function selectArrangement(arrangement: CatalogArrangement) {
   if (arrangement.arrangementId === selectedId.value) return;
+  const wasAssessing = assessing.value;
   stopPlayback();
+  clearAssessment();
+  if (wasAssessing) following.value = false;
   selectedId.value = arrangement.arrangementId;
   selectedSegment.value = 0;
   position.value = 0;
@@ -435,21 +687,94 @@ function sliceIdFor(segment: { start: number; end: number }): string | null {
  * 记账口径和「已弹对」标记一致——全对才记。练个半熟不往账本上写，
  * 否则技能清单上的「练过」会越来越不值钱。
  */
-function onFollowDone(payload: { onCount: number; total: number }) {
-  const score = followScore.value;
-  if (!score || payload.total === 0 || payload.onCount < payload.total) return;
-
+function bankPractice(profile: Profile, score: Score, bpm: number): Profile {
   const nextLedger = recordFollowPractice(
-    props.profile.skillLedger,
+    profile.skillLedger,
     requiredSkillsForScore(score),
     hand.value === "BOTH" ? "both" : hand.value,
-    followBpm.value,
+    bpm,
   );
-
-  emit("update-profile", {
-    ...markSegmentFollowed(props.profile, score.id),
+  return {
+    ...markSegmentFollowed(profile, score.id),
     skillLedger: nextLedger,
+  };
+}
+
+/**
+ * 收齐全曲后写一次评测。
+ *
+ * 只有弹对的分段才顺手写「已弹对」和技能练习证据；整曲匹配率则按实际
+ * 命中音数记录，哪怕某段没弹全也能看出弱在哪。写档案时从 `props.profile`
+ * 出发，不重建 `skillLedger`，所以同歌换更高编配时已掌握技能不会被清零。
+ */
+function persistAssessment(results: RepertoireSegmentResult[]) {
+  const score = selectedScore.value;
+  const selectedItem = selected.value;
+  if (!score || !selectedItem || results.length !== segments.value.length) return;
+
+  const assessment = buildRepertoireAssessment({
+    songId: selectedItem.song.songId,
+    arrangementId: selectedItem.arrangement.arrangementId,
+    packageId: selectedItem.arrangement.packageId,
+    hand: hand.value,
+    bpm: followBpm.value,
+    segments: results,
   });
+
+  let next = recordRepertoireAssessment(props.profile, assessment);
+  for (const result of results) {
+    if (result.total === 0 || result.onCount < result.total) continue;
+    const segmentScore = sliceScore(score, result.start, result.end, hand.value);
+    next = bankPractice(next, segmentScore, followBpm.value);
+  }
+  if (next !== props.profile) emit("update-profile", next);
+  emit("completed");
+}
+
+function onFollowDone(payload: { onCount: number; total: number }) {
+  const score = followScore.value;
+  if (!score || payload.total === 0) return;
+
+  if (assessing.value) {
+    const segment = assessmentSegment.value;
+    if (!segment) return;
+    const result: RepertoireSegmentResult = {
+      index: segment.index,
+      start: segment.start,
+      end: segment.end,
+      label: segment.label,
+      onCount: payload.onCount,
+      total: payload.total,
+      accuracy: payload.onCount / payload.total,
+    };
+    const next = [
+      ...assessmentResults.value.filter((item) => item.index !== segment.index),
+      result,
+    ].sort((a, b) => a.index - b.index);
+    assessmentResults.value = next;
+    if (next.length === segments.value.length) persistAssessment(next);
+    return;
+  }
+
+  // 还没整段弹对的分段就是「缺口」：记下这次重练的命中槽位，
+  // 让「我的」页能回答「反复练的地方到底命中多少」。
+  const segment = activeSegment.value;
+  const gap = segment ? segmentDone.value.get(segment.index) !== true : false;
+  let next = props.profile;
+  if (gap) {
+    next = recordGapAttempt(next, {
+      source: "repertoire-segment",
+      scoreId: score.id,
+      hand: hand.value,
+      onCount: payload.onCount,
+      total: payload.total,
+    });
+  }
+  if (payload.onCount < payload.total) {
+    if (next !== props.profile) emit("update-profile", next);
+    return;
+  }
+  emit("update-profile", bankPractice(next, score, followBpm.value));
 }
 
 function openSkillRoute(route: SkillRoute) {
@@ -544,12 +869,14 @@ function onSeekInput(event: Event) {
 }
 
 function setSpeed(value: number) {
+  if (assessing.value) clearAssessment();
   speed.value = value;
   const next = ensurePlayer();
   next?.setSpeed(value);
 }
 
 function setHand(value: Hand | "BOTH") {
+  if (assessing.value) clearAssessment();
   hand.value = value;
   const next = ensurePlayer();
   if (!next) return;
@@ -569,7 +896,56 @@ function setHand(value: Hand | "BOTH") {
 
     <p v-if="songs.length === 0" class="muted">还没有可用的曲目包。</p>
 
-    <section v-for="song in songs" :key="song.songId" class="song" :data-song="song.songId">
+    <div v-else class="filters" data-test="repertoire-filters">
+      <input
+        v-model="query"
+        type="search"
+        class="search"
+        placeholder="搜曲名、作曲家或编配"
+        aria-label="搜索曲目"
+        data-test="repertoire-search"
+      />
+      <div class="levels" role="group" aria-label="按档位筛选">
+        <button
+          type="button"
+          :class="{ active: levelFilter === 'all' }"
+          :aria-pressed="levelFilter === 'all'"
+          data-test="repertoire-level"
+          data-level="all"
+          @click="levelFilter = 'all'"
+        >
+          全部
+        </button>
+        <button
+          v-for="level in levelOptions"
+          :key="level"
+          type="button"
+          :class="{ active: levelFilter === level }"
+          :aria-pressed="levelFilter === level"
+          data-test="repertoire-level"
+          :data-level="level"
+          @click="levelFilter = level"
+        >
+          L{{ level }}
+        </button>
+      </div>
+      <span class="filter-count" data-test="repertoire-count">
+        {{ filteredSongs.length }} 首 · {{ filteredArrangements.length }} 个编配
+      </span>
+    </div>
+
+    <p
+      v-if="songs.length > 0 && filteredSongs.length === 0"
+      class="empty"
+      data-test="repertoire-empty"
+    >
+      没有匹配的曲目。
+      <button type="button" class="link" data-test="repertoire-clear" @click="clearFilters">
+        清除筛选
+      </button>
+    </p>
+
+    <section v-for="song in filteredSongs" :key="song.songId" class="song" :data-song="song.songId">
       <div class="song-head">
         <div>
           <h2>{{ song.title }}</h2>
@@ -587,6 +963,7 @@ function setHand(value: Hand | "BOTH") {
           :aria-pressed="arrangement.arrangementId === selectedId"
           data-test="arrangement"
           :data-arrangement="arrangement.arrangementId"
+          :data-level="arrangement.level"
           @click="selectArrangement(arrangement)"
         >
           <strong>{{ arrangement.label }}</strong>
@@ -601,6 +978,12 @@ function setHand(value: Hand | "BOTH") {
         <h2>{{ selected.arrangement.name }}</h2>
         <p class="readiness" :class="{ ready: missing.length === 0 }" data-test="readiness">
           {{ readiness }}
+        </p>
+        <p v-if="currentAssessmentText" class="muted assessment-best" data-test="repertoire-assessment-best">
+          {{ currentAssessmentText }}
+        </p>
+        <p v-if="inheritanceText" class="muted assessment-inheritance" data-test="repertoire-inheritance">
+          {{ inheritanceText }}
         </p>
       </div>
 
@@ -654,7 +1037,7 @@ function setHand(value: Hand | "BOTH") {
           id="repertoire-segment"
           v-model.number="selectedSegment"
           data-test="repertoire-segment"
-          :disabled="segments.length === 0"
+          :disabled="segments.length === 0 || assessing"
         >
           <option v-for="segment in segments" :key="segment.index" :value="segment.index">
             {{ segment.label }}{{ segmentDone.get(segment.index) ? " · 已弹对" : "" }}
@@ -664,10 +1047,21 @@ function setHand(value: Hand | "BOTH") {
           type="button"
           class="primary"
           data-test="repertoire-follow"
-          :disabled="!followScore"
+          :disabled="!followScore || assessing"
           @click="toggleFollow"
         >
-          {{ following ? "收起跟弹" : "跟弹本段" }}
+          {{ assessing ? "评测中" : following ? "收起跟弹" : "跟弹本段" }}
+        </button>
+        <button
+          type="button"
+          class="assess"
+          :class="{ active: assessing }"
+          :aria-pressed="assessing"
+          data-test="repertoire-assess"
+          :disabled="!selectedScore || segments.length === 0"
+          @click="toggleAssessment"
+        >
+          {{ assessing ? "退出整曲评测" : "整曲评测" }}
         </button>
         <button
           type="button"
@@ -682,6 +1076,64 @@ function setHand(value: Hand | "BOTH") {
         </button>
         <span class="segment-hint">只练这一段，可反复弹，不占用视奏额度。</span>
       </div>
+
+      <p v-if="pickupHint" class="pickup-hint" data-test="repertoire-pickup">
+        {{ pickupHint }}
+      </p>
+
+      <section v-if="assessing" class="assessment" data-test="repertoire-assessment">
+        <div class="assessment-head">
+          <strong>整曲评测</strong>
+          <span>{{ assessmentProgress }}</span>
+          <span class="assessment-summary" data-test="repertoire-assessment-summary">
+            {{ assessmentSummary }}
+          </span>
+        </div>
+        <ol class="assessment-list">
+          <li
+            v-for="segment in segments"
+            :key="segment.index"
+            :class="{
+              done: assessmentResultFor(segment.index),
+              current: segment.index === assessmentIndex,
+            }"
+            :data-test="`repertoire-assessment-segment-${segment.index}`"
+          >
+            <span>{{ segment.label }}</span>
+            <span v-if="assessmentDetail(segment.index)" class="assessment-detail">
+              {{ assessmentDetail(segment.index) }}
+            </span>
+            <span v-else-if="segment.index === assessmentIndex" class="assessment-current">当前</span>
+            <span v-else class="muted">待测</span>
+          </li>
+        </ol>
+        <div class="assessment-actions">
+          <button
+            v-if="assessmentIndex < segments.length - 1"
+            type="button"
+            class="primary"
+            data-test="repertoire-assessment-next"
+            :disabled="!assessmentResult"
+            @click="nextAssessment"
+          >
+            下一段
+          </button>
+          <button
+            type="button"
+            data-test="repertoire-assessment-retry"
+            :disabled="!assessmentResult"
+            @click="retryAssessmentSegment"
+          >
+            重测本段
+          </button>
+          <button type="button" data-test="repertoire-assessment-restart" @click="startAssessment">
+            从头评测
+          </button>
+        </div>
+        <p v-if="assessmentComplete" class="assessment-complete" data-test="repertoire-assessment-complete">
+          整曲评测完成：{{ assessmentSummary }}。分段结果已记录，可点「重测本段」刷新较弱的一段。
+        </p>
+      </section>
 
       <div class="staff" ref="staffEl" data-test="repertoire-staff"></div>
       <p v-if="renderError" class="warn">{{ renderError }}</p>
@@ -705,8 +1157,8 @@ function setHand(value: Hand | "BOTH") {
 
       <!-- 谱面在上、跟弹在下：眼睛看谱，手落在下面的琴键上 -->
       <ScoreFollow
-        v-if="following && followScore"
-        :key="`${selectedId}-${selectedSegment}-${hand}`"
+        v-if="(following || assessing) && followScore"
+        :key="followKey"
         :score="followScore"
         :hand="hand"
         :bpm="followBpm"
@@ -718,7 +1170,12 @@ function setHand(value: Hand | "BOTH") {
         <section class="info" data-test="repertoire-skills">
           <h3>需要的技能</h3>
           <ul class="skill-list">
-            <li v-for="skill in requiredSkills" :key="skill.id" :class="{ done: skill.done }">
+            <li
+              v-for="skill in requiredSkills"
+              :key="skill.id"
+              :class="{ done: skill.done }"
+              :data-skill="skill.id"
+            >
               <span>{{ skill.done ? "✓" : "○" }} {{ skill.name }}</span>
               <small v-if="!skill.done && evidence.get(skill.id)" class="practiced">
                 练过 · {{ evidence.get(skill.id)?.bpm ?? "—" }} BPM
@@ -769,8 +1226,8 @@ function setHand(value: Hand | "BOTH") {
               <p class="muted" data-test="repertoire-l3-gap">
                 预备课完成只记「学习中」，不会直接跳过曲目过关。
               </p>
-              <p v-if="higherMissing.length > 0" class="muted" data-test="repertoire-higher-gap">
-                L4+ 的 {{ higherMissing.map((skill) => skill.name).join("、") }} 暂无微课。
+              <p v-if="unroutedHigherMissing.length > 0" class="muted" data-test="repertoire-higher-gap">
+                L4+ 的 {{ unroutedHigherMissing.map((skill) => skill.name).join("、") }} 暂无微课。
               </p>
             </template>
           </template>
@@ -820,6 +1277,69 @@ h3 {
 .muted,
 .rights {
   color: var(--pb-muted);
+}
+
+.filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.55rem;
+  margin: 0 0 1rem;
+}
+
+.filters .search {
+  flex: 1 1 16rem;
+  min-width: 10rem;
+  padding: 0.5rem 0.7rem;
+  border: 1px solid var(--pb-border-soft);
+  border-radius: var(--pb-radius);
+  background: var(--pb-surface);
+  color: var(--pb-ink);
+  font-size: 0.85rem;
+}
+
+.levels {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.levels button {
+  padding: 0.35rem 0.7rem;
+  border: 1px solid var(--pb-border-soft);
+  border-radius: var(--pb-radius-pill);
+  background: transparent;
+  color: var(--pb-muted);
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+
+.levels button.active {
+  border-color: var(--pb-accent);
+  background: var(--pb-accent);
+  color: var(--pb-accent-text);
+}
+
+.filter-count {
+  color: var(--pb-muted);
+  font-size: 0.78rem;
+}
+
+.empty {
+  margin: 0 0 1rem;
+  color: var(--pb-muted);
+  font-size: 0.88rem;
+}
+
+.empty .link {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--pb-accent);
+  font-size: inherit;
+  text-decoration: underline;
+  text-underline-offset: 0.2rem;
+  cursor: pointer;
 }
 
 .song {
@@ -908,6 +1428,99 @@ h3 {
   overflow-x: auto;
   margin: 0.75rem 0;
   scrollbar-width: thin;
+}
+
+/* 弱起提示贴着谱面：先解释「为什么第一小节少一截」，再看谱 */
+.pickup-hint {
+  margin: 0.5rem 0 0;
+  padding: 0.4rem 0.7rem;
+  border-left: 3px solid var(--pb-accent);
+  background: var(--pb-tip-bg);
+  color: var(--pb-ink);
+  font-size: 0.82rem;
+  line-height: 1.5;
+}
+
+.assessment-best,
+.assessment-inheritance {
+  margin: 0.25rem 0 0;
+  font-size: 0.82rem;
+  text-align: right;
+}
+
+/* 整曲评测：分段列表就是成绩单，当前段与已完成段用不同底色区分 */
+.assessment {
+  margin: 0.75rem 0;
+  padding: var(--pb-space-2) var(--pb-space-3);
+  border: 1px solid var(--pb-border-soft);
+  border-radius: var(--pb-radius);
+  background: var(--pb-surface-2);
+}
+
+.assessment-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.4rem 0.75rem;
+  margin-bottom: 0.5rem;
+}
+
+.assessment-summary {
+  margin-left: auto;
+  color: var(--pb-accent-2);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.assessment-list {
+  display: grid;
+  gap: 0.3rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.assessment-list li {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.28rem 0.5rem;
+  border-radius: var(--pb-radius);
+  color: var(--pb-muted);
+  font-size: 0.85rem;
+}
+
+.assessment-list li.current {
+  background: var(--pb-surface);
+  box-shadow: inset 3px 0 0 var(--pb-accent);
+  color: var(--pb-ink);
+}
+
+.assessment-list li.done {
+  color: var(--pb-ink);
+}
+
+.assessment-detail {
+  font-variant-numeric: tabular-nums;
+}
+
+.assessment-current {
+  color: var(--pb-accent-2);
+  font-weight: 600;
+}
+
+.assessment-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--pb-space-2);
+  margin-top: 0.6rem;
+}
+
+.assessment-complete {
+  margin: 0.6rem 0 0;
+  color: var(--pb-ok);
+  font-size: 0.85rem;
+  line-height: 1.5;
 }
 
 /* 播放条放在谱面上方：先能听，再看谱，滚动时不用来回找按钮 */

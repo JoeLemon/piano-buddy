@@ -1,4 +1,6 @@
 import { L3_PREP_LESSONS } from "../practice/l3Lessons";
+import { SKILL_BY_ID } from "../repertoire/skillGraph";
+import { staleSkills } from "../repertoire/skillState";
 import { lessonGoalText, lessonStepLabel } from "./lessonProgress";
 import { canEnterL2, canEnterSight, type Profile } from "./profile";
 
@@ -10,7 +12,7 @@ import { canEnterL2, canEnterSight, type Profile } from "./profile";
  * 任何学习路径的调整都只改这里，不再散落在视图的 v-if 里。
  */
 
-export type NextActionKind = "placement" | "lesson" | "test" | "sight";
+export type NextActionKind = "placement" | "lesson" | "test" | "sight" | "review";
 
 export type NextAction = {
   kind: NextActionKind;
@@ -22,6 +24,8 @@ export type NextAction = {
   cta: string;
   /** 这一课的量化目标（「短句 1/2」）；没有量化目标时为空串。 */
   goal: string;
+  /** 复习动作要去的技能；首页用它决定落到哪一课。 */
+  skillIds?: string[];
 };
 
 export type PathStageId = "L1" | "L2" | "L3" | "library";
@@ -37,7 +41,7 @@ export type PathStage = {
  * 首页主卡：按「自评 → L1 → L2 → L3 → 视奏」的顺序给出唯一建议动作。
  * L3 是 L2 之后的和弦识谱课；L3 预备课仍可单独补，但不再阻塞主线。
  */
-export function nextAction(profile: Profile): NextAction {
+export function nextAction(profile: Profile, now: number = Date.now()): NextAction {
   if (!profile.assessment) {
     return {
       kind: "placement",
@@ -61,7 +65,7 @@ export function nextAction(profile: Profile): NextAction {
 
   if (profile.lessonId === "L1-test") {
     if (profile.l1RightPassed && profile.l1LeftPassed) {
-      return afterL1(profile);
+      return afterL1(profile, now);
     }
     const hands = profile.l1RightPassed ? "左手" : profile.l1LeftPassed ? "右手" : "右手和左手";
     return {
@@ -75,7 +79,7 @@ export function nextAction(profile: Profile): NextAction {
   }
 
   if (profile.lessonId.startsWith("L3R")) {
-    if (profile.l3Passed) return sightAction();
+    if (profile.l3Passed) return sightAction(profile, now);
     if (profile.lessonId === "L3R-test") {
       return {
         kind: "test",
@@ -97,7 +101,7 @@ export function nextAction(profile: Profile): NextAction {
 
   if (profile.lessonId.startsWith("L2")) {
     // 过完 L2 后 lessonId 仍停在 L2-test，所以先看 l2Passed，否则会一直让人重考。
-    if (profile.l2Passed) return afterL1(profile);
+    if (profile.l2Passed) return afterL1(profile, now);
     if (profile.lessonId === "L2-test") {
       return {
         kind: "test",
@@ -117,7 +121,7 @@ export function nextAction(profile: Profile): NextAction {
     };
   }
 
-  if (profile.l1RightPassed && profile.l1LeftPassed) return afterL1(profile);
+  if (profile.l1RightPassed && profile.l1LeftPassed) return afterL1(profile, now);
 
   return {
     kind: "lesson",
@@ -129,7 +133,7 @@ export function nextAction(profile: Profile): NextAction {
 }
 
 /** 两手都过了 L1 之后：先开 L2，过 L2 后进 L3，L3 过了视奏当日常。 */
-function afterL1(profile: Profile): NextAction {
+function afterL1(profile: Profile, now: number): NextAction {
   if (!canEnterL2(profile)) {
     return {
       kind: "lesson",
@@ -140,7 +144,7 @@ function afterL1(profile: Profile): NextAction {
     };
   }
   if (profile.l2Passed) {
-    if (profile.l3Passed) return sightAction();
+    if (profile.l3Passed) return sightAction(profile, now);
     if (profile.lessonId === "L3R-test") {
       return {
         kind: "test",
@@ -172,7 +176,16 @@ function afterL1(profile: Profile): NextAction {
   };
 }
 
-function sightAction(): NextAction {
+/**
+ * 复习优先于新视奏。
+ *
+ * 技能账本里的 `passed` 不是永久有效：超过 30 天没碰，识谱速度会掉。进入
+ * 日常练习阶段后，如果账本里有「学过但放旧了」的技能，首页先推复习；复习
+ * 一次写回 `lastPracticedAt`，主卡自然回到视奏。没到 L3 的不打断主线。
+ */
+function sightAction(profile: Profile, now: number): NextAction {
+  const review = reviewAction(profile, now);
+  if (review) return review;
   return {
     kind: "sight",
     eyebrow: "今日练习",
@@ -180,6 +193,34 @@ function sightAction(): NextAction {
     detail: "L3 也过了。视奏里会出现和弦与临时升降，每天一条就够了。",
     cta: "开始视奏",
     goal: "一条最多 2 遍",
+  };
+}
+
+/** 取最久没练的 3 个已掌握技能；同一技能左右手都过期时只算一项。 */
+export function reviewAction(profile: Profile, now: number = Date.now()): NextAction | null {
+  const seen = new Set<string>();
+  const stale = staleSkills(profile.skillLedger, now)
+    .sort((a, b) => (a.lastPracticedAt ?? 0) - (b.lastPracticedAt ?? 0))
+    .filter((item) => {
+      if (seen.has(item.skillId)) return false;
+      seen.add(item.skillId);
+      return true;
+    });
+  if (stale.length === 0) return null;
+
+  const top = stale.slice(0, 3);
+  const names = top
+    .map((item) => SKILL_BY_ID.get(item.skillId)?.name ?? item.skillId)
+    .join("、");
+  const more = stale.length > top.length ? ` 等 ${stale.length} 项` : "";
+  return {
+    kind: "review",
+    eyebrow: "复习提醒",
+    title: `该复习了 · ${stale.length} 项技能`,
+    detail: `超过 30 天没练：${names}${more}。先复习，再开新内容。`,
+    cta: "去复习",
+    goal: `${stale.length} 项待复习`,
+    skillIds: top.map((item) => item.skillId),
   };
 }
 

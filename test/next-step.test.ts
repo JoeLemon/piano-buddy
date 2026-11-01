@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { initialProfile, type Profile } from "../src/domain/profile";
 import { learningPath, nextAction, sightUnlocked } from "../src/domain/nextStep";
+import { SKILL_BY_ID } from "../src/repertoire/skillGraph";
 
 function profile(partial: Partial<Profile> = {}): Profile {
   return { ...initialProfile(), ...partial };
@@ -100,6 +101,104 @@ describe("nextAction", () => {
     expect(action.kind).toBe("sight");
     expect(action.detail).toContain("L3 也过了");
     expect(action.goal).toBe("一条最多 2 遍");
+  });
+
+  it("puts stale mastered skills ahead of new sight reading after L3", () => {
+    const now = Date.UTC(2026, 10, 1);
+    const action = nextAction(profile({
+      assessment: assessed,
+      lessonId: "L3R-test",
+      l1RightPassed: true,
+      l1LeftPassed: true,
+      l2Passed: true,
+      l3Passed: true,
+      skillLedger: {
+        "pos.five@both": {
+          skillId: "pos.five",
+          hand: "both",
+          state: "passed",
+          confidence: 1,
+          lastPracticedAt: 0,
+        },
+      },
+    }), now);
+
+    expect(action.kind).toBe("review");
+    expect(action.eyebrow).toBe("复习提醒");
+    expect(action.title).toContain("该复习了");
+    expect(action.detail).toContain(SKILL_BY_ID.get("pos.five")?.name);
+    expect(action.goal).toBe("1 项待复习");
+    expect(action.skillIds).toEqual(["pos.five"]);
+  });
+
+  it("keeps sight reading when the mastered skill was practiced recently", () => {
+    const now = Date.UTC(2026, 10, 1);
+    const action = nextAction(profile({
+      assessment: assessed,
+      lessonId: "L3R-test",
+      l1RightPassed: true,
+      l1LeftPassed: true,
+      l2Passed: true,
+      l3Passed: true,
+      skillLedger: {
+        "pos.five@both": {
+          skillId: "pos.five",
+          hand: "both",
+          state: "passed",
+          confidence: 1,
+          lastPracticedAt: now - 1000,
+        },
+      },
+    }), now);
+
+    expect(action.kind).toBe("sight");
+  });
+
+  it("does not interrupt the main course with a review card", () => {
+    const now = Date.UTC(2026, 10, 1);
+    const action = nextAction(profile({
+      assessment: assessed,
+      lessonId: "L1-2",
+      skillLedger: {
+        "pos.five@both": {
+          skillId: "pos.five",
+          hand: "both",
+          state: "passed",
+          confidence: 1,
+          lastPracticedAt: 0,
+        },
+      },
+    }), now);
+
+    expect(action.kind).toBe("lesson");
+  });
+
+  it("counts a skill once when both hands are stale", () => {
+    const now = Date.UTC(2026, 10, 1);
+    const stale = (hand: "RH" | "LH" | "both", skillId: string) => ({
+      skillId,
+      hand,
+      state: "passed" as const,
+      confidence: 1,
+      lastPracticedAt: 0,
+    });
+    const action = nextAction(profile({
+      assessment: assessed,
+      lessonId: "L3R-test",
+      l1RightPassed: true,
+      l1LeftPassed: true,
+      l2Passed: true,
+      l3Passed: true,
+      skillLedger: {
+        "pos.five@RH": stale("RH", "pos.five"),
+        "pos.five@LH": stale("LH", "pos.five"),
+        "rhythm.quarter@both": stale("both", "rhythm.quarter"),
+      },
+    }), now);
+
+    expect(action.kind).toBe("review");
+    expect(action.title).toContain("2 项技能");
+    expect(action.skillIds).toHaveLength(2);
   });
 
   it("never shows a percentage anywhere on the dashboard copy", () => {

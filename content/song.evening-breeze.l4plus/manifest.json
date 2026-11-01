@@ -1,0 +1,34 @@
+{
+  "schemaVersion": 1,
+  "id": "pkg.evening-breeze.full",
+  "songId": "song.evening-breeze",
+  "arrangementId": "arr.evening-breeze.full",
+  "songTitle": "晚风",
+  "composer": "Piano Buddy",
+  "name": "晚风 · L4+ 连音编配",
+  "type": "song",
+  "version": "1.0.0",
+  "minAppVersion": "2.0.0",
+  "skillDeps": [
+    "clef.bass",
+    "clef.treble",
+    "hands.both",
+    "hands.together",
+    "key.c",
+    "pos.five",
+    "rhythm.eighth",
+    "texture.broken"
+  ],
+  "difficulty": {
+    "level": 4,
+    "bpm": 66,
+    "repeat": 0.3,
+    "len": 9
+  },
+  "assets": ["content/score.json"],
+  "license": "original",
+  "rights": {
+    "type": "original",
+    "attribution": "Piano Buddy 教学编配（原创，3/4 弱起与跨小节延音）"
+  }
+}

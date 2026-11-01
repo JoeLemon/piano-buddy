@@ -60,8 +60,19 @@ describe("曲库目录", () => {
     expect(catalog.version).toBe(1);
     // 歌曲按标题排序；新加曲子不该打乱「同一首歌多个编配」的聚合断言。
     expect(catalog.songs.map((song) => song.songId)).toEqual([
+      "song.mist",
+      "song.rainbow",
       "song.morning-song",
+      "song.lantern",
+      "song.wind-chime",
       "song.ode-to-joy",
+      "song.corridor",
+      "song.gust",
+      "song.dusk",
+      "song.evening-breeze",
+      "song.little-boat",
+      "song.starlight",
+      "song.rain-alley",
     ]);
 
     const song = catalog.songs.find((item) => item.songId === "song.ode-to-joy")!;
@@ -82,6 +93,107 @@ describe("曲库目录", () => {
     expect(morning.arrangements).toHaveLength(1);
     expect(morning.arrangements[0].level).toBe(5);
     expect(morning.arrangements[0].rights?.type).toBe("original");
+
+    // 《晚风》补上 L4+ 的连音编配：3/4 弱起 + 双手跨小节延音，评级 4.5 → L4+。
+    const evening = catalog.songs.find((item) => item.songId === "song.evening-breeze")!;
+    expect(evening.arrangements).toHaveLength(1);
+    expect(evening.arrangements[0].level).toBe(4);
+    expect(evening.arrangements[0].label).toBe("L4+");
+    expect(evening.arrangements[0].skillDeps).toContain("texture.broken");
+    expect(evening.arrangements[0].rights?.type).toBe("original");
+
+    // 《雨巷》补 A 小调入门：3/4、12 小节、左手柱式和弦，评级 L4。
+    const rain = catalog.songs.find((item) => item.songId === "song.rain-alley")!;
+    expect(rain.arrangements).toHaveLength(1);
+    expect(rain.arrangements[0].level).toBe(4);
+    expect(rain.arrangements[0].measures).toBe(12);
+    expect(rain.arrangements[0].skillDeps).toContain("key.minor");
+    expect(rain.arrangements[0].skillDeps).toContain("chord.minor");
+    expect(rain.arrangements[0].rights?.type).toBe("original");
+
+    // 《小船》补 6/8 入门：12 小节、右手八分音符、左手根音 + 柱式和弦，评级 L5。
+    const boat = catalog.songs.find((item) => item.songId === "song.little-boat")!;
+    expect(boat.arrangements).toHaveLength(1);
+    expect(boat.arrangements[0].level).toBe(5);
+    expect(boat.arrangements[0].label).toBe("L5");
+    expect(boat.arrangements[0].measures).toBe(12);
+    expect(boat.arrangements[0].skillDeps).toContain("meter.six-eight");
+    expect(boat.arrangements[0].skillDeps).toContain("rhythm.dotted");
+    expect(boat.arrangements[0].rights?.type).toBe("original");
+
+    // 《星光》补三连音入门：4/4、12 小节、右手四分音符三连音，评级 L5。
+    const starlight = catalog.songs.find((item) => item.songId === "song.starlight")!;
+    expect(starlight.arrangements).toHaveLength(1);
+    expect(starlight.arrangements[0].level).toBe(5);
+    expect(starlight.arrangements[0].label).toBe("L5");
+    expect(starlight.arrangements[0].measures).toBe(12);
+    expect(starlight.arrangements[0].skillDeps).toContain("rhythm.triplet");
+    expect(starlight.arrangements[0].rights?.type).toBe("original");
+
+    // 《彩虹》补 L5 和弦色彩：三和弦转位 + 大七/属七，12 小节，评级 L5。
+    const rainbow = catalog.songs.find((item) => item.songId === "song.rainbow")!;
+    expect(rainbow.arrangements).toHaveLength(1);
+    expect(rainbow.arrangements[0].level).toBe(5);
+    expect(rainbow.arrangements[0].label).toBe("L5");
+    expect(rainbow.arrangements[0].measures).toBe(12);
+    expect(rainbow.arrangements[0].skillDeps).toContain("chord.inversion");
+    expect(rainbow.arrangements[0].skillDeps).toContain("chord.seventh");
+    expect(rainbow.arrangements[0].rights?.type).toBe("original");
+
+    // 《风铃》补 L6：十六分音符跑动 + 六度/八度跳进 + 左手分解和弦，评级 L6。
+    const windChime = catalog.songs.find((item) => item.songId === "song.wind-chime")!;
+    expect(windChime.arrangements).toHaveLength(1);
+    expect(windChime.arrangements[0].level).toBe(6);
+    expect(windChime.arrangements[0].label).toBe("L6");
+    expect(windChime.arrangements[0].measures).toBe(12);
+    expect(windChime.arrangements[0].skillDeps).toContain("rhythm.sixteenth");
+    expect(windChime.arrangements[0].skillDeps).toContain("pos.leap");
+    expect(windChime.arrangements[0].skillDeps).toContain("texture.broken");
+    expect(windChime.arrangements[0].rights?.type).toBe("original");
+
+    // 《灯影》补 d 小调：Dm 调号 + 左手柱式和弦（i / III / VII），评级 L4。
+    const lantern = catalog.songs.find((item) => item.songId === "song.lantern")!;
+    expect(lantern.arrangements).toHaveLength(1);
+    expect(lantern.arrangements[0].level).toBe(4);
+    // 体感标签按「半档」算：这首没有额外速度/长度修正，落在 L4 而不是 L4+
+    expect(lantern.arrangements[0].label).toBe("L4");
+    expect(lantern.arrangements[0].measures).toBe(12);
+    expect(lantern.arrangements[0].skillDeps).toContain("key.minor");
+    expect(lantern.arrangements[0].skillDeps).toContain("chord.minor");
+    expect(lantern.arrangements[0].rights?.type).toBe("original");
+
+    // 《回廊》补一个降号的 L6：F 大调 + 十六分跑动，评级 L6。
+    const corridor = catalog.songs.find((item) => item.songId === "song.corridor")!;
+    expect(corridor.arrangements).toHaveLength(1);
+    expect(corridor.arrangements[0].level).toBe(6);
+    expect(corridor.arrangements[0].label).toBe("L6");
+    expect(corridor.arrangements[0].measures).toBe(12);
+    expect(corridor.arrangements[0].skillDeps).toContain("key.one-flat");
+    expect(corridor.arrangements[0].skillDeps).toContain("rhythm.sixteenth");
+    expect(corridor.arrangements[0].rights?.type).toBe("original");
+
+    // 《薄雾》补减七/半减七与八度重复根音：A 小调 8 小节柱式和弦，评级 L6。
+    const mist = catalog.songs.find((item) => item.songId === "song.mist")!;
+    expect(mist.arrangements).toHaveLength(1);
+    expect(mist.arrangements[0].level).toBe(6);
+    expect(mist.arrangements[0].label).toBe("L6");
+    expect(mist.arrangements[0].measures).toBe(8);
+    expect(mist.arrangements[0].skillDeps).toContain("chord.diminished");
+    expect(mist.arrangements[0].skillDeps).toContain("chord.seventh");
+    expect(mist.arrangements[0].rights?.type).toBe("original");
+  });
+
+  it("L4+ 编配里两只手都真的用了跨小节延音", () => {
+    const source = loadSources().find(
+      (item) => item.manifest.id === "pkg.evening-breeze.full",
+    )!;
+    expect(source).toBeTruthy();
+
+    for (const hand of source.score.hands) {
+      const notes = source.score.staves[hand]!.measures.flatMap((measure) => measure.notes);
+      expect(notes.some((note) => note.tie === "start")).toBe(true);
+      expect(notes.some((note) => note.tie === "stop")).toBe(true);
+    }
   });
 
   it("拒绝缺 songTitle、超纲和重复 arrangementId 的包", () => {

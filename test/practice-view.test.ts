@@ -238,6 +238,19 @@ describe("PracticeView", () => {
     expect(next.practiceStats.broken).toEqual({ answered: 5, correct: 5 });
   });
 
+  it("opens a hand-written L5 lesson with its 6/8 staff", async () => {
+    const wrapper = mount(PracticeView, {
+      props: { seed: 1, profile: initialProfile(), focusStageId: "L5-2" },
+    });
+
+    await wrapper.vm.$nextTick();
+
+    expect(wrapper.get("[data-test=practice-progress]").text()).toBe("第 1 / 4 题");
+    expect(wrapper.get("[data-test=practice-stage-head]").text()).toContain("6/8 拍");
+    expect(wrapper.find("[data-test=practice-staff]").exists()).toBe(true);
+    wrapper.unmount();
+  });
+
   it("counts free-practice answers into per-kind stats and shows the cumulative rate", async () => {
     const wrapper = mount(PracticeView, { props: { seed: 1, profile: initialProfile() } });
 

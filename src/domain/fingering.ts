@@ -25,7 +25,7 @@
 
 import { pitchToMidi } from "./pitch";
 import type { Hand, Pitch, Score, Stave } from "./types";
-import { DURATION_BEATS } from "./vocabulary";
+import { noteBeats } from "./vocabulary";
 
 // ---------------------------------------------------------------------------
 // 求解器输入模型
@@ -721,12 +721,12 @@ function collectHandEntries(stave: Stave): HandEntry[] {
             measureIndex,
             eventIndex,
             pitchIndex,
-            durationBeats: DURATION_BEATS[event.duration],
+            durationBeats: noteBeats(event),
             finger: event.fingers?.[pitchIndex] ?? 0,
           });
         });
       }
-      beat += DURATION_BEATS[event.duration];
+      beat += noteBeats(event);
     });
   });
   // 按（拍, 音高）排序：和弦内低音在前，与上游 reader 的和弦展开一致。

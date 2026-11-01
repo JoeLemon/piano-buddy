@@ -1,0 +1,13 @@
+{
+  "name": "{{title}} · 导入编配",
+  "composer": "待填写",
+  "difficulty": {
+    "level": "{{level}}",
+    "repeat": 0.3
+  },
+  "skillDeps": ["{{skills}}"],
+  "license": "user-imported",
+  "rights": {
+    "type": "user-imported"
+  }
+}

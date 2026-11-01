@@ -1,0 +1,44 @@
+{
+  "schemaVersion": 1,
+  "id": "pkg.mist.full",
+  "songId": "song.mist",
+  "arrangementId": "arr.mist.full",
+  "songTitle": "薄雾",
+  "composer": "Piano Buddy",
+  "name": "薄雾 · L6 减七与半减七",
+  "type": "song",
+  "version": "1.0.0",
+  "minAppVersion": "2.0.0",
+  "skillDeps": [
+    "chord.diminished",
+    "chord.minor",
+    "chord.progression",
+    "chord.seventh",
+    "chord.triad",
+    "clef.bass",
+    "clef.treble",
+    "hands.both",
+    "hands.together",
+    "key.accidental",
+    "key.minor",
+    "pos.expand",
+    "pos.five",
+    "pos.leap",
+    "pos.shift",
+    "rhythm.quarter"
+  ],
+  "difficulty": {
+    "level": 6,
+    "bpm": 60,
+    "repeat": 0.3,
+    "len": 8
+  },
+  "assets": [
+    "content/score.json"
+  ],
+  "license": "original",
+  "rights": {
+    "type": "original",
+    "attribution": "Piano Buddy 教学编配（原创，A 小调 4/4，右手柱式和弦（含八度重复根音）与半减七/减七，左手长音低音）"
+  }
+}

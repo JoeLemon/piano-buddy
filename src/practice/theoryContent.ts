@@ -9,6 +9,7 @@
 
 import { CATALOG_BY_ID as INTERVAL_BY_ID, displayName as intervalDisplayName } from "./intervalCatalog";
 import { CHORD_CATALOG, type ChordType } from "./chordCatalog";
+import type { KeySignature } from "../domain/types";
 import type { PracticeStaffPrompt } from "./practiceScore";
 import type { PlaybackKey } from "./melodyTypes";
 
@@ -142,6 +143,7 @@ export const CHORD_LABELS: Record<string, string> = {
   min7: "小七和弦",
   dom7: "属七和弦",
   dim7: "减七和弦",
+  halfDim7: "半减七和弦",
 };
 
 export type ChordExample = {
@@ -166,7 +168,11 @@ const CHORD_ROOTS: Readonly<Record<string, readonly string[]>> = {
   maj7: ["C4", "G4"],
   min7: ["A4", "D4"],
   dom7: ["G4", "C4"],
-  dim7: ["D4", "B4"],
+  // 减和弦只挑「拼写干净」的根音：D 的减七要写 C♭、F 的半减七要写 C♭，
+  // 读谱题里全是重升重降只会添乱。B 的减七（B–D–F–A♭）与半减七（B–D–F–A）
+  // 只差七音，正好用来做对照。
+  dim7: ["B4", "A4"],
+  halfDim7: ["B4", "D4"],
 };
 
 const LETTERS = ["C", "D", "E", "F", "G", "A", "B"] as const;
@@ -229,9 +235,13 @@ export type ProgressionExample = {
 };
 
 /** 把三个和弦的 voicing 排成三小节，每小节一个全音符和弦。 */
-function progressionStaff(voicings: readonly (readonly string[])[]): PracticeStaffPrompt {
+function progressionStaff(
+  voicings: readonly (readonly string[])[],
+  keySignature: KeySignature,
+): PracticeStaffPrompt {
   return {
     clef: "treble",
+    keySignature,
     groups: [],
     measures: voicings.map((pitches) => [{ pitches, duration: "w" }]),
   };
@@ -244,44 +254,56 @@ export const PROGRESSIONS: readonly ProgressionExample[] = [
     key: "C 大调",
     chords: ["C", "F", "C"],
     answer: "I – IV – I",
-    staff: progressionStaff([
-      ["C4", "E4", "G4"],
-      ["F4", "A4", "C5"],
-      ["C4", "E4", "G4"],
-    ]),
+    staff: progressionStaff(
+      [
+        ["C4", "E4", "G4"],
+        ["F4", "A4", "C5"],
+        ["C4", "E4", "G4"],
+      ],
+      "C",
+    ),
   },
   {
     id: "major-151",
     key: "C 大调",
     chords: ["C", "G", "C"],
     answer: "I – V – I",
-    staff: progressionStaff([
-      ["C4", "E4", "G4"],
-      ["G4", "B4", "D5"],
-      ["C4", "E4", "G4"],
-    ]),
+    staff: progressionStaff(
+      [
+        ["C4", "E4", "G4"],
+        ["G4", "B4", "D5"],
+        ["C4", "E4", "G4"],
+      ],
+      "C",
+    ),
   },
   {
     id: "minor-141",
     key: "A 小调",
     chords: ["Am", "Dm", "Am"],
     answer: "i – iv – i",
-    staff: progressionStaff([
-      ["A4", "C5", "E5"],
-      ["D4", "F4", "A4"],
-      ["A4", "C5", "E5"],
-    ]),
+    staff: progressionStaff(
+      [
+        ["A4", "C5", "E5"],
+        ["D4", "F4", "A4"],
+        ["A4", "C5", "E5"],
+      ],
+      "Am",
+    ),
   },
   {
     id: "minor-151",
     key: "A 小调",
     chords: ["Am", "E", "Am"],
     answer: "i – V – i",
-    staff: progressionStaff([
-      ["A4", "C5", "E5"],
-      ["E4", "G#4", "B4"],
-      ["A4", "C5", "E5"],
-    ]),
+    staff: progressionStaff(
+      [
+        ["A4", "C5", "E5"],
+        ["E4", "G#4", "B4"],
+        ["A4", "C5", "E5"],
+      ],
+      "Am",
+    ),
   },
 ];
 

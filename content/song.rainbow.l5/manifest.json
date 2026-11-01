@@ -1,0 +1,39 @@
+{
+  "schemaVersion": 1,
+  "id": "pkg.rainbow.full",
+  "songId": "song.rainbow",
+  "arrangementId": "arr.rainbow.full",
+  "songTitle": "彩虹",
+  "composer": "Piano Buddy",
+  "name": "彩虹 · L5 和弦色彩编配",
+  "type": "song",
+  "version": "1.0.0",
+  "minAppVersion": "2.0.0",
+  "skillDeps": [
+    "chord.inversion",
+    "chord.progression",
+    "chord.seventh",
+    "chord.triad",
+    "clef.bass",
+    "clef.treble",
+    "hands.both",
+    "hands.together",
+    "key.c",
+    "pos.expand",
+    "pos.five",
+    "pos.shift",
+    "rhythm.quarter"
+  ],
+  "difficulty": {
+    "level": 5,
+    "bpm": 60,
+    "repeat": 0.3,
+    "len": 12
+  },
+  "assets": ["content/score.json"],
+  "license": "original",
+  "rights": {
+    "type": "original",
+    "attribution": "Piano Buddy 教学编配（原创，4/4 拍，右手四分音符旋律，左手柱式和弦；含三和弦转位、大七/属七和弦与密集声部连接）"
+  }
+}

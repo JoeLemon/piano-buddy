@@ -1,0 +1,38 @@
+{
+  "schemaVersion": 1,
+  "id": "pkg.dusk.full",
+  "songId": "song.dusk",
+  "arrangementId": "arr.dusk.full",
+  "songTitle": "暮色",
+  "composer": "Piano Buddy",
+  "name": "暮色 · L4+ 小调编配",
+  "type": "song",
+  "version": "1.0.0",
+  "minAppVersion": "2.0.0",
+  "skillDeps": [
+    "clef.bass",
+    "clef.treble",
+    "hands.alternate",
+    "hands.both",
+    "hands.together",
+    "key.minor",
+    "pos.expand",
+    "pos.five",
+    "pos.shift",
+    "rhythm.eighth"
+  ],
+  "difficulty": {
+    "level": 4,
+    "bpm": 66,
+    "repeat": 0.3,
+    "len": 12
+  },
+  "assets": [
+    "content/score.json"
+  ],
+  "license": "original",
+  "rights": {
+    "type": "original",
+    "attribution": "Piano Buddy 教学编配（原创，E 小调 3/4，右手八分音符旋律，左手分解和弦）"
+  }
+}

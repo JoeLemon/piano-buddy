@@ -1,18 +1,23 @@
 import type { TheoryProgress } from "../domain/profile";
-import { CURRICULUM_STAGES, L4_PREP_STAGES } from "./curriculum";
+import {
+  CURRICULUM_STAGES,
+  L4_PREP_STAGES,
+  L5_PREP_STAGES,
+  L6_PREP_STAGES,
+} from "./curriculum";
 import { L3_PREP_LESSONS } from "./l3Lessons";
 import type { PracticeKind } from "./quiz";
 import type { SymbolGroup } from "./theoryContent";
 
 /**
- * 乐理路径：一条进度串起「基础十关 + L3 预备九课 + L4 预备两课」。
+ * 乐理路径：一条进度串起「基础十关 + L3 预备九课 + L4–L6 预备各五课」。
  *
  * 原来的专项题组和 L3 预备课是两套入口、两套进度；这里把它们排成
- * 三章一条线。基础关按顺序解锁，L3/L4 课作为第二、三章可以随时复习
+ * 六章一条线。基础关按顺序解锁，L3–L6 课作为后续章节可以随时复习
  * （曲库缺对应技能时按钮直达）；通过任意一章都会写入
  * `Profile.theoryPath`，和关卡测试共用同一份进度。
  */
-export type TheoryChapterId = "basics" | "l3" | "l4";
+export type TheoryChapterId = "basics" | "l3" | "l4" | "l5" | "l6";
 
 export type TheoryChapter = {
   id: TheoryChapterId;
@@ -31,7 +36,7 @@ export type TheoryNode = {
   symbolGroups?: readonly SymbolGroup[];
   questionCount: number;
   passScore: number;
-  /** L3 节点对应的课 id，点击后直接打开这一节。 */
+  /** L3 课节点对应的课 id，点击后直接打开这一节。 */
   lessonId?: string;
 };
 
@@ -49,7 +54,18 @@ export const THEORY_CHAPTERS: readonly TheoryChapter[] = [
   {
     id: "l4",
     title: "L4 预备课",
-    description: "两节短课：分解和弦与手位读谱，配合 L4 编配；可以随时进去复习。",
+    description: "四节短课：分解和弦、手位读谱、和弦转位、小调与小三和弦；配综合小测。",
+  },
+  {
+    id: "l5",
+    title: "L5 预备课",
+    description: "四节短课：七和弦、6/8、三连音、附点与切分；配综合小测。",
+  },
+  {
+    id: "l6",
+    title: "L6 预备课",
+    description:
+      "四节短课：十六分音符、六度/八度跳进、离开五指位、综合视奏；另加一节减七与半减七，配综合小测。",
   },
 ];
 
@@ -86,6 +102,26 @@ export const THEORY_PATH: readonly TheoryNode[] = [
     questionCount: stage.questionCount,
     passScore: stage.passScore,
   })),
+  ...L5_PREP_STAGES.map((stage) => ({
+    id: stage.id,
+    chapter: "l5" as const,
+    title: stage.title,
+    goal: stage.goal,
+    guidance: stage.guidance,
+    kind: stage.kind as PracticeKind,
+    questionCount: stage.questionCount,
+    passScore: stage.passScore,
+  })),
+  ...L6_PREP_STAGES.map((stage) => ({
+    id: stage.id,
+    chapter: "l6" as const,
+    title: stage.title,
+    goal: stage.goal,
+    guidance: stage.guidance,
+    kind: stage.kind as PracticeKind,
+    questionCount: stage.questionCount,
+    passScore: stage.passScore,
+  })),
 ];
 
 export type TheoryNodeState = "done" | "available" | "locked";
@@ -96,8 +132,8 @@ export function isTheoryNodeDone(progress: TheoryProgress, nodeId: string): bool
 }
 
 /**
- * 基础关按顺序解锁；L3/L4 章不锁，保持「随时复习、缺技能直达」的定位。
- * 这样既有一条主线，又不会把已经学过的 L3/L4 课锁在十关后面。
+ * 基础关按顺序解锁；L3–L6 章不锁，保持「随时复习、缺技能直达」的定位。
+ * 这样既有一条主线，又不会把已经学过的后续课锁在十关后面。
  */
 export function theoryNodeState(progress: TheoryProgress, node: TheoryNode): TheoryNodeState {
   if (isTheoryNodeDone(progress, node.id)) return "done";
@@ -123,7 +159,7 @@ export function theoryPathDone(progress: TheoryProgress): number {
   return THEORY_PATH.filter((node) => isTheoryNodeDone(progress, node.id)).length;
 }
 
-/** 下一个建议节点：基础关里第一个没完成的；十关全过后是 L3、再是 L4 的第一节未完成。 */
+/** 下一个建议节点：基础关里第一个没完成的；十关全过后按 L3 → L4 → L5 → L6 找。 */
 export function nextTheoryNode(progress: TheoryProgress): TheoryNode | null {
   const basics = theoryChapterNodes("basics");
   const nextBasic = basics.find((node) => !isTheoryNodeDone(progress, node.id));
@@ -131,9 +167,11 @@ export function nextTheoryNode(progress: TheoryProgress): TheoryNode | null {
     const index = basics.findIndex((node) => node.id === nextBasic.id);
     if (index === 0 || isTheoryNodeDone(progress, basics[index - 1].id)) return nextBasic;
   }
-  return (
-    theoryChapterNodes("l3").find((node) => !isTheoryNodeDone(progress, node.id)) ??
-    theoryChapterNodes("l4").find((node) => !isTheoryNodeDone(progress, node.id)) ??
-    null
-  );
+  for (const chapter of ["l3", "l4", "l5", "l6"] as const) {
+    const next = theoryChapterNodes(chapter).find(
+      (node) => !isTheoryNodeDone(progress, node.id),
+    );
+    if (next) return next;
+  }
+  return null;
 }

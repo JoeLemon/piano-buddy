@@ -1,6 +1,8 @@
 import { pitchToMidi } from "../domain/pitch";
+import { playOrder } from "../domain/repeats";
+import { sameMidis, tiesFrom, tiesTo } from "../domain/tie";
 import type { Hand, Score } from "../domain/types";
-import { DURATION_BEATS } from "../domain/vocabulary";
+import { noteBeats } from "../domain/vocabulary";
 
 export type Playback = { stop: () => void };
 
@@ -408,14 +410,30 @@ type PreviewEvent = { midi: number; midis: number[]; beat: number; beats: number
 function previewEvents(score: Score, hand: Hand | "BOTH"): PreviewEvent[] {
   const hands: readonly Hand[] = hand === "BOTH" ? ["RH", "LH"] : [hand];
   const events: PreviewEvent[] = [];
+  const order = playOrder(score);
   for (const nextHand of hands) {
+    const measures = score.staves[nextHand]?.measures ?? [];
     let beat = 0;
-    for (const measure of score.staves[nextHand]?.measures ?? []) {
+    /** 还开着口的连音线：stop 段并进起点，不重新击键（与 flattenScore 同口径）。 */
+    let open: PreviewEvent | null = null;
+    let previousMeasure: number | null = null;
+    for (const measureIndex of order) {
+      const measure = measures[measureIndex];
+      if (!measure) continue;
+      if (previousMeasure !== null && measureIndex !== previousMeasure + 1) open = null;
+      previousMeasure = measureIndex;
       for (const note of measure.notes) {
-        const beats = DURATION_BEATS[note.duration];
+        const beats = noteBeats(note);
         if (note.pitches.length > 0 && !note.duration.endsWith("r")) {
           const midis = note.pitches.map((pitch) => pitchToMidi(pitch));
-          events.push({ midi: midis[0] ?? 0, midis, beat, beats });
+          if (tiesFrom(note) && open && sameMidis(open.midis, midis)) {
+            open.beats += beats;
+            if (!tiesTo(note)) open = null;
+          } else {
+            const event: PreviewEvent = { midi: midis[0] ?? 0, midis, beat, beats };
+            events.push(event);
+            open = tiesTo(note) ? event : null;
+          }
         }
         beat += beats;
       }

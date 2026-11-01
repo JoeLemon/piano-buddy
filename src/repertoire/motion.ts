@@ -1,6 +1,6 @@
 import type { Hand, Score } from "../domain/types";
 import { tiesTo } from "../domain/tie";
-import { DURATION_BEATS } from "../domain/vocabulary";
+import { noteBeats } from "../domain/vocabulary";
 import { pitchToMidi } from "../domain/pitch";
 
 /**
@@ -71,7 +71,7 @@ export function scoreToMotion(score: Score, title: string = score.id): MotionSco
     let beat = 0;
     stave.measures.forEach((measure, measureIndex) => {
       measure.notes.forEach((note, noteIndex) => {
-        const durationBeats = DURATION_BEATS[note.duration];
+        const durationBeats = noteBeats(note);
         if (note.pitches.length > 0 && !note.duration.endsWith("r")) {
           note.pitches.forEach((pitch, pitchIndex) => {
             notes.push({

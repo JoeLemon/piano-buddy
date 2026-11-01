@@ -361,7 +361,7 @@ function nodeMeta(node: TheoryNode): string {
   return `${node.questionCount} 题 · 通过线 ${node.passScore}`;
 }
 
-/** 点击地图节点：基础关与 L4 关直接开题，L3 节点回到对应的预备课。 */
+/** 点击地图节点：基础关与 L4–L6 关直接开题，L3 节点回到对应的预备课。 */
 function openNode(node: TheoryNode) {
   if (nodeState(node) === "locked") return;
   if (node.lessonId) {

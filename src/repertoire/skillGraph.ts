@@ -1,9 +1,10 @@
 import type { Hand, PositionId, Score, Duration, KeySignature, Pitch } from "../domain/types";
+import { identifyChord, isDiminishedQuality, isSeventhQuality } from "../domain/chords";
 import { isAllowed } from "../domain/allowed";
 import {
-  DURATION_BEATS,
   expansionPitches,
   keyAlteration,
+  noteBeats,
   pitchesFor,
 } from "../domain/vocabulary";
 import { pitchToMidi } from "../domain/pitch";
@@ -44,6 +45,7 @@ export const SKILLS: readonly Skill[] = [
   { id: "key.one-flat", name: "一个降号", level: 2, prereq: ["key.c"] },
   { id: "key.one-sharp", name: "一个升号", level: 2, prereq: ["key.c"] },
   { id: "key.two-acc", name: "两个升降号", level: 4, prereq: ["key.one-flat", "key.one-sharp"] },
+  { id: "key.minor", name: "a/e/d 小调", level: 4, prereq: ["key.one-flat", "key.one-sharp"] },
   { id: "key.accidental", name: "临时升降号", level: 3, prereq: ["key.c"] },
   // 双手
   { id: "hands.both", name: "双手合奏", level: 2, prereq: ["pos.five"] },
@@ -53,10 +55,13 @@ export const SKILLS: readonly Skill[] = [
   { id: "rhythm.eighth", name: "八分音符", level: 2, prereq: ["rhythm.quarter"] },
   { id: "rhythm.dotted", name: "附点节奏", level: 5, prereq: ["rhythm.eighth"] },
   { id: "rhythm.syncopation", name: "切分节奏", level: 5, prereq: ["rhythm.eighth"] },
+  { id: "rhythm.triplet", name: "三连音", level: 5, prereq: ["rhythm.eighth"] },
   { id: "rhythm.sixteenth", name: "十六分音符", level: 6, prereq: ["rhythm.eighth"] },
+  { id: "meter.six-eight", name: "6/8 拍", level: 5, prereq: ["rhythm.eighth"] },
   // 和声
   { id: "chord.interval", name: "双音音程", level: 3, prereq: ["pos.five"] },
   { id: "chord.triad", name: "三和弦", level: 3, prereq: ["chord.interval"] },
+  { id: "chord.minor", name: "小三和弦", level: 4, prereq: ["chord.triad"] },
   { id: "chord.progression", name: "和弦连接", level: 3, prereq: ["chord.triad"] },
   // 手位/音域
   { id: "pos.shift", name: "手位平移", level: 2, prereq: ["pos.five"] },
@@ -68,6 +73,7 @@ export const SKILLS: readonly Skill[] = [
   { id: "pedal.sustain", name: "延音踏板", level: 4, prereq: ["pos.five"] },
   { id: "chord.inversion", name: "和弦转位", level: 4, prereq: ["chord.triad"] },
   { id: "chord.seventh", name: "七和弦", level: 5, prereq: ["chord.triad"] },
+  { id: "chord.diminished", name: "减七 / 半减七", level: 6, prereq: ["chord.seventh"] },
 ];
 
 export const SKILL_BY_ID: ReadonlyMap<string, Skill> = new Map(SKILLS.map((s) => [s.id, s]));
@@ -77,10 +83,12 @@ const RHYTHM_RANK: Record<string, number> = {
   "rhythm.eighth": 1,
   "rhythm.dotted": 2,
   "rhythm.syncopation": 2,
+  "rhythm.triplet": 2.5,
   "rhythm.sixteenth": 3,
 };
 
-function rhythmSkill(d: Duration): string {
+function rhythmSkill(d: Duration, tuplet?: string): string {
+  if (tuplet) return "rhythm.triplet";
   if (d === "16" || d === "16r") return "rhythm.sixteenth";
   if (d === "hd" || d === "qd") return "rhythm.dotted";
   if (d === "8" || d === "8r") return "rhythm.eighth";
@@ -94,6 +102,9 @@ function keySkill(key: KeySignature): string {
     case "G": return "key.one-sharp";
     case "D":
     case "Bb": return "key.two-acc";
+    case "Am":
+    case "Em":
+    case "Dm": return "key.minor";
   }
 }
 
@@ -176,6 +187,13 @@ function analyzeHandByFingering(score: Score, hand: Hand): HandPositionResult | 
   let hasExpansion = false;
 
   for (const note of notes) {
+    const info = identifyChord(note.pitches);
+    // 转位三和弦、七和弦与八度重复根音的和弦都是「和声形状」，不是五指位
+    // 形状：E–G–C、C4–E4–G4–C5 在 C 手位里本来就要换指型。把它们从手位
+    // 统计里拿掉，避免把和弦形状误报成 pos.shift / pos.expand；手位仍由
+    // 周围的单音或原位三和弦决定。
+    if (info && (info.inversion > 0 || info.doubled || isSeventhQuality(info.quality))) continue;
+
     const fingers = note.fingers!;
     fingeredPitches += note.pitches.length;
     fingeredNotes.push({ pitches: note.pitches, fingers });
@@ -219,7 +237,10 @@ function analyzeHandByFingering(score: Score, hand: Hand): HandPositionResult | 
 
 /** 单手音高兜底：没有指法时只能判断「有没有换位/扩张」。 */
 function analyzeHandByPitch(score: Score, hand: Hand): HandPositionResult | null {
-  const notes = soundingNotes(score, hand);
+  const notes = soundingNotes(score, hand).filter((note) => {
+    const info = identifyChord(note.pitches);
+    return !(info && (info.inversion > 0 || info.doubled || isSeventhQuality(info.quality)));
+  });
   if (notes.length === 0) return null;
 
   const baseCover = POSITIONS.find((position) =>
@@ -320,7 +341,7 @@ function soundingBeats(score: Score): Map<Hand, Set<number>> {
       let beat = 0;
       for (const measure of stave.measures) {
         for (const note of measure.notes) {
-          const beatsForNote = DURATION_BEATS[note.duration];
+          const beatsForNote = noteBeats(note);
           if (note.pitches.length > 0 && !note.duration.endsWith("r")) beats.add(beat);
           beat += beatsForNote;
         }
@@ -339,7 +360,7 @@ function hasSyncopation(score: Score): boolean {
     let beat = 0;
     for (const measure of stave.measures) {
       for (const note of measure.notes) {
-        const beats = DURATION_BEATS[note.duration];
+        const beats = noteBeats(note);
         if (note.pitches.length > 0 && !note.duration.endsWith("r")) {
           const offBeat = Math.abs((beat % 1) - 0.5) < 1e-6;
           if (offBeat && beats >= 1) return true;
@@ -351,23 +372,26 @@ function hasSyncopation(score: Score): boolean {
   return false;
 }
 
-/** 3 个音级是否能组成大三/小三/减/增三和弦（允许任意转位）。 */
-function isTriadPitchClasses(pitchClasses: number[]): boolean {
-  if (pitchClasses.length !== 3) return false;
-  const triads = new Set(["0,3,7", "0,4,7", "0,3,6", "0,4,8"]);
+/** 3–4 个音级是否能组成当前词汇里的三/七和弦（允许任意转位）。 */
+function isChordPitchClasses(pitchClasses: number[]): boolean {
+  if (pitchClasses.length < 3 || pitchClasses.length > 4) return false;
+  const chords = new Set([
+    "0,3,7", "0,4,7", "0,3,6", "0,4,8",
+    "0,4,7,11", "0,3,7,10", "0,4,7,10", "0,3,6,9",
+  ]);
   for (const root of pitchClasses) {
     const normalized = pitchClasses
       .map((pc) => (pc - root + 12) % 12)
       .sort((a, b) => a - b)
       .join(",");
-    if (triads.has(normalized)) return true;
+    if (chords.has(normalized)) return true;
   }
   return false;
 }
 
 /**
  * 分解和弦织体：低音手在至少两个小节里出现「从最低音起、跨五度以上、
- * 包含一次三度以上跳进、音级构成三和弦」的连续单音型。
+ * 包含一次三度以上跳进、音级构成三/七和弦」的连续单音型。
  * 这是启发式，用于把 L4 编配从「单音旋律」里区分出来。
  */
 function hasBrokenChordTexture(score: Score): boolean {
@@ -388,7 +412,7 @@ function hasBrokenChordTexture(score: Score): boolean {
       if (midis[0] !== Math.min(...midis)) continue;
       if (!midis.slice(1).some((midi, index) => Math.abs(midi - midis[index]) >= 4)) continue;
       const pitchClasses = [...new Set(midis.map((midi) => midi % 12))].sort((a, b) => a - b);
-      if (!isTriadPitchClasses(pitchClasses)) continue;
+      if (!isChordPitchClasses(pitchClasses)) continue;
       const key = pitchClasses.join(",");
       const count = (patternCounts.get(key) ?? 0) + 1;
       patternCounts.set(key, count);
@@ -424,8 +448,13 @@ export function requiredSkillsForScore(score: Score): Set<string> {
     skills.add("pos.five");
   }
   skills.add(keySkill(score.keySignature));
+  if (score.meter.beats === 6 && score.meter.beatValue === 8) skills.add("meter.six-eight");
 
   let hasAccidental = false;
+  let hasMinorTriad = false;
+  let hasInversion = false;
+  let hasSeventh = false;
+  let hasDiminished = false;
   let maxChordSize = 1;
   let rhythm: string | null = null;
   for (const hand of score.hands) {
@@ -433,9 +462,16 @@ export function requiredSkillsForScore(score: Score): Set<string> {
     if (!stave) continue;
     for (const measure of stave.measures) {
       for (const note of measure.notes) {
-        const r = rhythmSkill(note.duration);
+        const r = rhythmSkill(note.duration, note.tuplet);
         if (rhythm === null || RHYTHM_RANK[r] > RHYTHM_RANK[rhythm]) rhythm = r;
         maxChordSize = Math.max(maxChordSize, note.pitches.length);
+        const info = identifyChord(note.pitches);
+        if (info?.quality === "min" && note.pitches.length === 3) {
+          hasMinorTriad = true;
+        }
+        if (info && info.inversion > 0) hasInversion = true;
+        if (info && isSeventhQuality(info.quality)) hasSeventh = true;
+        if (info && isDiminishedQuality(info.quality)) hasDiminished = true;
         for (const p of note.pitches) {
           if (p.alteration !== keyAlteration(score.keySignature, p.step)) hasAccidental = true;
         }
@@ -449,6 +485,10 @@ export function requiredSkillsForScore(score: Score): Set<string> {
 
   if (maxChordSize >= 3) skills.add("chord.triad");
   else if (maxChordSize === 2) skills.add("chord.interval");
+  if (hasMinorTriad) skills.add("chord.minor");
+  if (hasInversion) skills.add("chord.inversion");
+  if (hasSeventh) skills.add("chord.seventh");
+  if (hasDiminished) skills.add("chord.diminished");
   if (chordProgressionCount(score) >= 2) skills.add("chord.progression");
 
   const positions = analyzeHandPositions(score);

@@ -1,0 +1,40 @@
+{
+  "schemaVersion": 1,
+  "id": "pkg.corridor.full",
+  "songId": "song.corridor",
+  "arrangementId": "arr.corridor.full",
+  "songTitle": "回廊",
+  "composer": "Piano Buddy",
+  "name": "回廊 · L6 一个降号编配",
+  "type": "song",
+  "version": "1.0.0",
+  "minAppVersion": "2.0.0",
+  "skillDeps": [
+    "chord.triad",
+    "clef.bass",
+    "clef.treble",
+    "hands.alternate",
+    "hands.both",
+    "hands.together",
+    "key.one-flat",
+    "pos.expand",
+    "pos.five",
+    "pos.leap",
+    "pos.shift",
+    "rhythm.sixteenth"
+  ],
+  "difficulty": {
+    "level": 6,
+    "bpm": 54,
+    "repeat": 0.3,
+    "len": 12
+  },
+  "assets": [
+    "content/score.json"
+  ],
+  "license": "original",
+  "rights": {
+    "type": "original",
+    "attribution": "Piano Buddy 教学编配（原创，F 大调 4/4，右手十六分跑动与八度跳进，左手分解和弦换位）"
+  }
+}

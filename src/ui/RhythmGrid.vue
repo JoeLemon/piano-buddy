@@ -27,8 +27,25 @@ const props = withDefaults(
   { marks: () => [], finished: false, prefix: "rhythm" },
 );
 
-/** 每拍宽度：窄屏也不该小于 40px，否则音名挤成一团。 */
-const BEAT_W = 44;
+/** 每拍的基础宽度：四/八分音符够用，十六分音符再按密度加宽。 */
+const BASE_BEAT_W = 44;
+/** 相邻槽位至少留这么宽，音名才不会叠在一起（「C+1」约 21px）。 */
+const MIN_SLOT_W = 24;
+
+/**
+ * 每拍宽度：按最小的槽位间隔加宽。
+ *
+ * 十六分音符一拍有四个槽位，仍用 44px 的话相邻音名只隔 11px，会和和弦
+ * 的「+1」叠成一团；三连音同理。稀疏谱面保持原宽度，密集谱面才展开。
+ */
+const beatW = computed(() => {
+  let minGap = 1;
+  for (let index = 1; index < props.plan.slots.length; index += 1) {
+    const gap = props.plan.slots[index]!.startBeat - props.plan.slots[index - 1]!.startBeat;
+    if (gap > 0 && gap < minGap) minGap = gap;
+  }
+  return Math.max(BASE_BEAT_W, Math.ceil(MIN_SLOT_W / minGap));
+});
 
 /**
  * 首尾各留半拍。
@@ -36,7 +53,7 @@ const BEAT_W = 44;
  * 音名、落点、游标都以拍线为中心（`translateX(-50%)`），第 0 拍的标签
  * 会有一半落在轨道外面被裁掉；留出半拍正好容下它。
  */
-const PAD = BEAT_W / 2;
+const pad = computed(() => beatW.value / 2);
 
 const lane = ref<HTMLElement | null>(null);
 
@@ -71,7 +88,7 @@ const beatNos = computed(() =>
 /** 游标位置：预备拍期间钉在 0，不往左跑出画布。 */
 const cursorX = computed(() => {
   const beat = Math.min(Math.max(props.beat, 0), props.plan.totalBeats);
-  return beat * BEAT_W;
+  return beat * beatW.value;
 });
 
 /**
@@ -118,8 +135,8 @@ watch(
     const cursor = cursorX.value;
     const left = element.scrollLeft;
     const right = left + element.clientWidth;
-    if (cursor > right - BEAT_W || cursor < left) {
-      element.scrollLeft = Math.max(0, cursor - element.clientWidth + BEAT_W);
+    if (cursor > right - beatW.value || cursor < left) {
+      element.scrollLeft = Math.max(0, cursor - element.clientWidth + beatW.value);
     }
   },
 );
@@ -130,10 +147,10 @@ watch(
     class="rhythm"
     :class="{ counting: countingIn }"
     :data-test="`${prefix}-grid`"
-    :style="{ '--beat-w': `${BEAT_W}px` }"
+    :style="{ '--beat-w': `${beatW}px` }"
   >
     <div ref="lane" class="lane">
-      <div class="grid" :style="{ width: `${beatCount * BEAT_W + PAD * 2}px` }">
+      <div class="grid" :style="{ width: `${beatCount * beatW + pad * 2}px` }">
         <div
           v-for="beat in beatCount"
           :key="beat"
@@ -142,7 +159,7 @@ watch(
             bar: barStarts.includes(beat - 1),
             past: props.beat >= beat - 1,
           }"
-          :style="{ left: `${(beat - 1) * BEAT_W + PAD}px` }"
+          :style="{ left: `${(beat - 1) * beatW + pad}px` }"
         >
           <span class="cell-no">{{ beatNos[beat - 1] }}</span>
         </div>
@@ -152,7 +169,7 @@ watch(
           :key="`n${index}`"
           class="note"
           :class="{ chord: slot.midis.length > 1 }"
-          :style="{ left: `${slot.startBeat * BEAT_W + PAD}px` }"
+          :style="{ left: `${slot.startBeat * beatW + pad}px` }"
           :data-midi="mainMidi(index) ?? ''"
         >
           <span class="name">
@@ -165,7 +182,7 @@ watch(
           :key="`m${mark.slotIndex}`"
           class="mark"
           :class="mark.quality"
-          :style="{ left: `${mark.atBeat * BEAT_W + PAD}px` }"
+          :style="{ left: `${mark.atBeat * beatW + pad}px` }"
           :data-test="`${prefix}-mark-${mark.slotIndex}`"
         ></span>
 
@@ -173,14 +190,14 @@ watch(
           v-for="entry in missed"
           :key="`x${entry.index}`"
           class="missed"
-          :style="{ left: `${entry.slot.startBeat * BEAT_W + PAD}px` }"
+          :style="{ left: `${entry.slot.startBeat * beatW + pad}px` }"
           :data-test="`${prefix}-missed-${entry.index}`"
         ></span>
 
         <div
           v-if="!countingIn && !finished"
           class="cursor"
-          :style="{ left: `${cursorX + PAD}px` }"
+          :style="{ left: `${cursorX + pad}px` }"
           :data-test="`${prefix}-cursor`"
         ></div>
 

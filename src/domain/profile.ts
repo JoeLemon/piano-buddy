@@ -4,6 +4,10 @@ import type { Hand, Score } from "./types";
 // 两侧都是 import type，编译后不留运行时依赖，不会形成循环。
 import type { SkillLedger, SkillMastery } from "../repertoire/skillState";
 import type { SkillState } from "../repertoire/skillGraph";
+import {
+  normalizeRepertoireAssessmentBook,
+  type RepertoireAssessmentBook,
+} from "../repertoire/assessment";
 
 export type Assessment = {
   knowsTreble: boolean;
@@ -53,6 +57,36 @@ export type PracticeEntry = {
   kind: PracticeKind;
   /** 本次实际练习时长，进入页面到离开/完成之间计时。 */
   ms: number;
+  /**
+   * 离开页面时是否至少完成了一次练习闭环。
+   *
+   * 旧档案没有这个字段：它们只知道停留了多久，无法反推用户有没有放弃，
+   * 所以指标里只统计明确写成 `false` 的记录。
+   */
+  completed?: boolean;
+  /** 离开的页面标识（reading/sight/practice…），用于定位放弃点。 */
+  screen?: string;
+  /** 页面内的具体内容：课位、关卡、曲目或「自由练习」。 */
+  focus?: string;
+};
+
+/** 缺口重练的来源：错题本，或曲库里还没弹对的分段。 */
+export type GapAttemptSource = "error-book" | "repertoire-segment";
+
+/**
+ * 一次「补缺口」的跟弹记录。
+ *
+ * 缺口不是所有练习，而是已经暴露过弱点的内容：错题本里的旧错误，或曲库里
+ * 尚未整段弹对的分段。只记命中槽位/总槽位，不参与任何过关判定。
+ */
+export type GapAttempt = {
+  at: number;
+  source: GapAttemptSource;
+  scoreId: string;
+  hand: Hand | "BOTH";
+  /** 音高与拍点都对的槽位数。 */
+  onCount: number;
+  total: number;
 };
 
 /**
@@ -105,8 +139,15 @@ export type Profile = {
   skillLedger: SkillLedger;
   /** 整段弹对过的切片谱 id（id 已含编配、小节与手别，换手要重新弹对）。 */
   followedSegments: string[];
+  /**
+   * 整曲评测历史：按「编配 + 手别」保存最好的一次分段匹配率。
+   * 只影响曲库的完成度展示，不替代识谱过关。
+   */
+  repertoireAssessments: RepertoireAssessmentBook;
   /** 乐理练习按题型的累计答数/答对数；只做统计，不写过关。 */
   practiceStats: PracticeStats;
+  /** 补缺口跟弹记录；只保留最近 200 条，用于导出「缺口命中率」。 */
+  gapAttempts: GapAttempt[];
 };
 
 const PRACTICE_KINDS: readonly PracticeKind[] = [
@@ -147,7 +188,9 @@ export function initialProfile(): Profile {
     practiceLog: [],
     skillLedger: {},
     followedSegments: [],
+    repertoireAssessments: {},
     practiceStats: {},
+    gapAttempts: [],
   };
 }
 
@@ -191,7 +234,9 @@ export function mergeProfile(stored: Partial<Profile> | null | undefined): Profi
     practiceLog: normalizePracticeLog(stored.practiceLog),
     skillLedger: normalizeSkillLedger(stored.skillLedger),
     followedSegments: normalizeStringArray(stored.followedSegments).slice(-MAX_FOLLOWED_SEGMENTS),
+    repertoireAssessments: normalizeRepertoireAssessmentBook(stored.repertoireAssessments),
     practiceStats: normalizePracticeStats(stored.practiceStats),
+    gapAttempts: normalizeGapAttempts(stored.gapAttempts),
   };
 }
 
@@ -353,20 +398,73 @@ export function practiceStatsTotals(stats: PracticeStats): PracticeStat {
 
 function normalizePracticeLog(value: unknown): PracticeEntry[] {
   if (!Array.isArray(value)) return [];
-  const entries = value.filter((entry): entry is PracticeEntry => {
-    if (!entry || typeof entry !== "object") return false;
+  const entries: PracticeEntry[] = [];
+  for (const entry of value) {
+    if (!entry || typeof entry !== "object") continue;
     const candidate = entry as Partial<PracticeEntry>;
-    return (
-      typeof candidate.at === "number"
-      && Number.isFinite(candidate.at)
-      && typeof candidate.ms === "number"
-      && Number.isFinite(candidate.ms)
-      && candidate.ms > 0
-      && typeof candidate.kind === "string"
-      && PRACTICE_KINDS.includes(candidate.kind as PracticeKind)
-    );
-  });
+    if (
+      typeof candidate.at !== "number"
+      || !Number.isFinite(candidate.at)
+      || typeof candidate.ms !== "number"
+      || !Number.isFinite(candidate.ms)
+      || candidate.ms <= 0
+      || typeof candidate.kind !== "string"
+      || !PRACTICE_KINDS.includes(candidate.kind as PracticeKind)
+    ) {
+      continue;
+    }
+    const normalized: PracticeEntry = {
+      at: candidate.at,
+      kind: candidate.kind as PracticeKind,
+      ms: candidate.ms,
+    };
+    if (typeof candidate.completed === "boolean") normalized.completed = candidate.completed;
+    if (typeof candidate.screen === "string" && candidate.screen) normalized.screen = candidate.screen;
+    if (typeof candidate.focus === "string" && candidate.focus) normalized.focus = candidate.focus;
+    entries.push(normalized);
+  }
   return entries.slice(-400);
+}
+
+const GAP_ATTEMPT_SOURCES: readonly GapAttemptSource[] = ["error-book", "repertoire-segment"];
+const GAP_ATTEMPT_HANDS: readonly (Hand | "BOTH")[] = ["RH", "LH", "BOTH"];
+const MAX_GAP_ATTEMPTS = 200;
+
+function normalizeGapAttempts(value: unknown): GapAttempt[] {
+  if (!Array.isArray(value)) return [];
+  const attempts: GapAttempt[] = [];
+  for (const entry of value) {
+    if (!entry || typeof entry !== "object") continue;
+    const candidate = entry as Partial<GapAttempt>;
+    if (
+      typeof candidate.at !== "number"
+      || !Number.isFinite(candidate.at)
+      || typeof candidate.source !== "string"
+      || !GAP_ATTEMPT_SOURCES.includes(candidate.source as GapAttemptSource)
+      || typeof candidate.scoreId !== "string"
+      || !candidate.scoreId
+      || typeof candidate.hand !== "string"
+      || !GAP_ATTEMPT_HANDS.includes(candidate.hand as Hand | "BOTH")
+      || typeof candidate.onCount !== "number"
+      || !Number.isFinite(candidate.onCount)
+      || typeof candidate.total !== "number"
+      || !Number.isFinite(candidate.total)
+      || candidate.total <= 0
+    ) {
+      continue;
+    }
+    const total = Math.floor(candidate.total);
+    const onCount = Math.min(total, Math.max(0, Math.floor(candidate.onCount)));
+    attempts.push({
+      at: candidate.at,
+      source: candidate.source as GapAttemptSource,
+      scoreId: candidate.scoreId,
+      hand: candidate.hand as Hand | "BOTH",
+      onCount,
+      total,
+    });
+  }
+  return attempts.slice(-MAX_GAP_ATTEMPTS);
 }
 
 /** 记录一节 L3 预备课完成；只写“上过”，不写技能 passed。 */

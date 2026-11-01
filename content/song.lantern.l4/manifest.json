@@ -1,0 +1,41 @@
+{
+  "schemaVersion": 1,
+  "id": "pkg.lantern.full",
+  "songId": "song.lantern",
+  "arrangementId": "arr.lantern.full",
+  "songTitle": "灯影",
+  "composer": "Piano Buddy",
+  "name": "灯影 · L4 小调编配",
+  "type": "song",
+  "version": "1.0.0",
+  "minAppVersion": "2.0.0",
+  "skillDeps": [
+    "chord.minor",
+    "chord.progression",
+    "chord.triad",
+    "clef.bass",
+    "clef.treble",
+    "hands.alternate",
+    "hands.both",
+    "hands.together",
+    "key.minor",
+    "pos.expand",
+    "pos.five",
+    "pos.shift",
+    "rhythm.eighth"
+  ],
+  "difficulty": {
+    "level": 4,
+    "bpm": 60,
+    "repeat": 0.3,
+    "len": 12
+  },
+  "assets": [
+    "content/score.json"
+  ],
+  "license": "original",
+  "rights": {
+    "type": "original",
+    "attribution": "Piano Buddy 教学编配（原创，D 小调 4/4，右手八分音符旋律，左手柱式和弦）"
+  }
+}

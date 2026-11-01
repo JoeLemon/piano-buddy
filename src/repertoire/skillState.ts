@@ -139,8 +139,8 @@ export const LEVEL_SKILLS: Record<number, readonly string[]> = {
     "pos.shift",
   ],
   3: ["chord.interval", "chord.triad", "chord.progression", "key.accidental"],
-  4: ["key.two-acc", "pos.expand", "texture.broken", "chord.inversion", "pedal.sustain"],
-  5: ["rhythm.dotted", "rhythm.syncopation", "chord.seventh"],
+  4: ["key.two-acc", "key.minor", "pos.expand", "texture.broken", "chord.minor", "chord.inversion", "pedal.sustain"],
+  5: ["rhythm.dotted", "rhythm.syncopation", "rhythm.triplet", "meter.six-eight", "chord.seventh"],
   6: ["rhythm.sixteenth", "pos.leap"],
 };
 
@@ -266,8 +266,9 @@ export function missingSkillOrder(missing: Iterable<string>, ledger: SkillLedger
  * （L1 5 / L2 8 / L3 12，随档位递增——越往后一课的容量越大），练过的打三折
  * ——曲子已经能弹下来，只差认谱过关，复习一遍比从头学快。
  *
- * 没有微课的技能（L4+）不计入分钟：没有课就谈不上「多久补完」，界面会单独
- * 说「暂无微课」。宁可少算，也不虚报一个到不了的承诺。
+ * 图谱里还没接微课的技能不计入分钟：没有课就谈不上「多久补完」，界面会单独
+ * 说「暂无微课」。宁可少算，也不虚报一个到不了的承诺。L4–L6 已经接上乐理
+ * 预备关的技能照常计入。
  *
  * 分钟数是估算，界面用「约」字开口；不作为验收承诺。
  */

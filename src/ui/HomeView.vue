@@ -1,8 +1,15 @@
 <script setup lang="ts">
 import { computed } from "vue";
-import { learningPath, nextAction, sightUnlocked, type NextAction } from "../domain/nextStep";
+import {
+  learningPath,
+  nextAction,
+  reviewAction,
+  sightUnlocked,
+  type NextAction,
+} from "../domain/nextStep";
 import { formatMinutes, practiceSummary } from "../domain/practiceLog";
-import type { Profile } from "../domain/profile";
+import type { LessonId, Profile } from "../domain/profile";
+import { routeForSkill } from "../domain/skillRoutes";
 
 const props = defineProps<{
   profile: Profile;
@@ -16,9 +23,13 @@ const emit = defineEmits<{
   "open-sight": [];
   "open-placement": [];
   "open-error": [];
+  "open-lesson": [lessonId: LessonId];
+  "open-theory": [lessonId: string];
+  "open-stage": [stageId: string];
 }>();
 
 const action = computed(() => nextAction(props.profile));
+const review = computed(() => reviewAction(props.profile));
 const path = computed(() => learningPath(props.profile));
 const bothLocked = computed(() => !props.rightUnlocked && !props.leftUnlocked);
 const sightReady = computed(() => sightUnlocked(props.profile));
@@ -40,6 +51,24 @@ function runAction(next: NextAction) {
     emit("open-sight");
     return;
   }
+  if (next.kind === "review") {
+    // 复习落到第一个过期技能的微课；没有微课就回当前识谱课。
+    const route = next.skillIds?.[0] ? routeForSkill(next.skillIds[0]) : null;
+    if (route?.kind === "reading" || route?.kind === "l3") {
+      emit("open-lesson", route.lessonId);
+      return;
+    }
+    if (route?.kind === "theory") {
+      emit("open-theory", route.lessonId);
+      return;
+    }
+    if (route?.kind === "stage") {
+      emit("open-stage", route.stageId);
+      return;
+    }
+    emit("open-reading");
+    return;
+  }
   // L3 和弦课要走 L3 入口，不能复用 L2 的「回看最后一课」逻辑。
   if (next.kind === "lesson" && next.eyebrow === "L3 和弦") {
     emit("open-l3-reading");
@@ -54,6 +83,11 @@ function openSight() {
     return;
   }
   emit("open-sight");
+}
+
+function openReview() {
+  const next = review.value;
+  if (next) runAction(next);
 }
 </script>
 
@@ -79,6 +113,20 @@ function openSight() {
       <span data-test="today-count">{{ practiceLine }}</span>
       <span data-test="today-streak">连续 {{ practice.streak }} 天</span>
     </div>
+
+    <section
+      v-if="review && action.kind !== 'review'"
+      class="review-reminder"
+      data-test="review-reminder"
+    >
+      <div>
+        <strong>{{ review.title }}</strong>
+        <p>{{ review.detail }}</p>
+      </div>
+      <button type="button" class="review-cta" data-test="review-cta" @click="openReview">
+        {{ review.cta }}
+      </button>
+    </section>
 
     <div class="dash">
       <section class="block">
@@ -206,6 +254,45 @@ function openSight() {
 
 .today-strip[data-done="true"] .today-state {
   color: var(--pb-ok);
+}
+
+/* 复习提醒是副卡：不抢主卡的动作，但把「学过的东西放旧了」说清楚 */
+.review-reminder {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--pb-space-2) var(--pb-space-3);
+  padding: 0.65rem 0.8rem;
+  border: 1px solid var(--pb-border-soft);
+  border-left: 3px solid var(--pb-warn);
+  border-radius: var(--pb-radius);
+  background: var(--pb-surface-2);
+}
+
+.review-reminder strong {
+  display: block;
+  color: var(--pb-ink);
+  font-size: 0.88rem;
+}
+
+.review-reminder p {
+  margin: 0.2rem 0 0;
+  color: var(--pb-muted);
+  font-size: 0.8rem;
+  line-height: 1.5;
+}
+
+.review-cta {
+  flex: none;
+  padding: 0.4rem 0.8rem;
+  border: 1px solid var(--pb-accent-2);
+  border-radius: var(--pb-radius);
+  background: transparent;
+  color: var(--pb-accent-2);
+  font-size: 0.82rem;
+  font-weight: 600;
+  cursor: pointer;
 }
 
 /* ---------- 两栏：路径 + 练法 ---------- */

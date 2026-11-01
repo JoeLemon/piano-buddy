@@ -61,6 +61,63 @@ describe("HomeView", () => {
     expect(wrapper.text()).not.toContain("视奏里只会用到已经认过的五个音，先把它们认准。");
   });
 
+  it("routes a stale-skill review back to its micro lesson", async () => {
+    const wrapper = mount(HomeView, {
+      props: {
+        profile: profile({
+          assessment: { knowsTreble: true, knowsBass: true, keepsPulse: true },
+          lessonId: "L3R-test",
+          l1RightPassed: true,
+          l1LeftPassed: true,
+          l2Passed: true,
+          l3Passed: true,
+          skillLedger: {
+            "pos.five@both": {
+              skillId: "pos.five",
+              hand: "both",
+              state: "passed",
+              confidence: 1,
+              lastPracticedAt: 0,
+            },
+          },
+        }),
+        rightUnlocked: true,
+        leftUnlocked: true,
+      },
+    });
+
+    expect(wrapper.text()).toContain("该复习了");
+    await wrapper.get("[data-test=next-cta]").trigger("click");
+    expect(wrapper.emitted("open-lesson")?.[0]).toEqual(["L1-3"]);
+    expect(wrapper.emitted("open-sight")).toBeFalsy();
+  });
+
+  it("shows a review reminder without replacing the current lesson", async () => {
+    const wrapper = mount(HomeView, {
+      props: {
+        profile: profile({
+          assessment: { knowsTreble: true, knowsBass: false, keepsPulse: true },
+          lessonId: "L1-2",
+          skillLedger: {
+            "pos.five@both": {
+              skillId: "pos.five",
+              hand: "both",
+              state: "passed",
+              confidence: 1,
+              lastPracticedAt: 0,
+            },
+          },
+        }),
+        rightUnlocked: true,
+        leftUnlocked: true,
+      },
+    });
+
+    expect(wrapper.get("[data-test=review-reminder]").text()).toContain("该复习了");
+    await wrapper.get("[data-test=review-cta]").trigger("click");
+    expect(wrapper.emitted("open-lesson")?.[0]).toEqual(["L1-3"]);
+  });
+
   it("opens reading from the reading button", async () => {
     const wrapper = mount(HomeView, {
       props: {

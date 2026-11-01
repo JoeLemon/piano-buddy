@@ -1,9 +1,9 @@
 import { isHeldEnough } from "../domain/hold";
 import { parsePitchLabel, pitchToMidi } from "../domain/pitch";
-import { measureBeatStarts } from "../domain/pickup";
+import { performanceMeasures } from "../domain/repeats";
 import { scoreEvents } from "../domain/scoreEvents";
 import type { Hand, Score } from "../domain/types";
-import { DURATION_BEATS } from "../domain/vocabulary";
+import { DURATION_BEATS, meterQuarterBeats } from "../domain/vocabulary";
 import type { PlayTarget } from "./playAnswer";
 import type { PlaybackQuestion } from "./melodyTypes";
 import { MELODY_BPM } from "./melodyTypes";
@@ -49,6 +49,11 @@ export type RhythmPlan = {
    * 开始逐小节错位，所以小节线位置读这张表；音型题没有小节概念，省略。
    */
   measureStarts?: readonly number[];
+  /**
+   * 每个小节线对应的原始小节号（1 起算）。反复时同一小节会出现多次，
+   * 光靠数组下标会把第二遍标成后面的小节。
+   */
+  measureNumbers?: readonly number[];
   /**
    * 弱起小节的实际拍数。首小节的音符虽然从第 0 拍起算，但在谱面上是从
    * 小节末尾几拍进来的（4/4 弱起一声进在第 4 拍），拍号标签要靠它补偏移。
@@ -181,12 +186,15 @@ export function planForScore(
     0,
   );
 
+  const layout = performanceMeasures(score, hand);
   return {
     slots,
     bpm,
-    beatsPerBar: score.meter.beats,
+    // 网格以四分音符为一格：6/8 的一小节是 3 格（6 个八分音符）。
+    beatsPerBar: meterQuarterBeats(score.meter),
     totalBeats,
-    measureStarts: measureBeatStarts(score),
+    measureStarts: layout.map((measure) => measure.startBeat),
+    measureNumbers: layout.map((measure) => measure.number),
     ...(score.pickup === undefined ? {} : { pickupBeats: score.pickup }),
   };
 }
@@ -211,9 +219,10 @@ export function barOfBeat(plan: RhythmPlan, beat: number): { bar: number; inBar:
     if (beat >= starts[i] - 0.001) index = i;
     else break;
   }
+  const number = plan.measureNumbers?.[index] ?? index + 1;
   const offset =
-    index === 0 && plan.pickupBeats !== undefined ? plan.beatsPerBar - plan.pickupBeats : 0;
-  return { bar: index + 1, inBar: Math.round(beat - starts[index] + offset) + 1 };
+    number === 1 && plan.pickupBeats !== undefined ? plan.beatsPerBar - plan.pickupBeats : 0;
+  return { bar: number, inBar: Math.round(beat - starts[index] + offset) + 1 };
 }
 
 /** 某个绝对时刻落在第几拍（可为负：还在预备拍里）。 */

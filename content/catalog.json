@@ -2,6 +2,79 @@
   "version": 1,
   "songs": [
     {
+      "songId": "song.mist",
+      "title": "薄雾",
+      "composer": "Piano Buddy",
+      "arrangements": [
+        {
+          "arrangementId": "arr.mist.full",
+          "packageId": "pkg.mist.full",
+          "name": "薄雾 · L6 减七与半减七",
+          "level": 6,
+          "label": "L6",
+          "bpm": 60,
+          "measures": 8,
+          "skillDeps": [
+            "chord.diminished",
+            "chord.minor",
+            "chord.progression",
+            "chord.seventh",
+            "chord.triad",
+            "clef.bass",
+            "clef.treble",
+            "hands.both",
+            "hands.together",
+            "key.accidental",
+            "key.minor",
+            "pos.expand",
+            "pos.five",
+            "pos.leap",
+            "pos.shift",
+            "rhythm.quarter"
+          ],
+          "rights": {
+            "type": "original",
+            "attribution": "Piano Buddy 教学编配（原创，A 小调 4/4，右手柱式和弦（含八度重复根音）与半减七/减七，左手长音低音）"
+          }
+        }
+      ]
+    },
+    {
+      "songId": "song.rainbow",
+      "title": "彩虹",
+      "composer": "Piano Buddy",
+      "arrangements": [
+        {
+          "arrangementId": "arr.rainbow.full",
+          "packageId": "pkg.rainbow.full",
+          "name": "彩虹 · L5 和弦色彩编配",
+          "level": 5,
+          "label": "L5",
+          "bpm": 60,
+          "measures": 12,
+          "skillDeps": [
+            "chord.inversion",
+            "chord.progression",
+            "chord.seventh",
+            "chord.triad",
+            "clef.bass",
+            "clef.treble",
+            "hands.both",
+            "hands.together",
+            "key.c",
+            "pos.expand",
+            "pos.five",
+            "pos.shift",
+            "rhythm.quarter"
+          ],
+          "rights": {
+            "type": "original",
+            "attribution": "Piano Buddy 教学编配（原创，4/4 拍，右手四分音符旋律，左手柱式和弦；含三和弦转位、大七/属七和弦与密集声部连接）"
+          }
+        }
+      ]
+    },
+    {
       "songId": "song.morning-song",
       "title": "晨歌",
       "composer": "Piano Buddy",
@@ -30,6 +103,74 @@
           "rights": {
             "type": "original",
             "attribution": "Piano Buddy 教学编配（原创，含弱起小节与跨小节延音）"
+          }
+        }
+      ]
+    },
+    {
+      "songId": "song.lantern",
+      "title": "灯影",
+      "composer": "Piano Buddy",
+      "arrangements": [
+        {
+          "arrangementId": "arr.lantern.full",
+          "packageId": "pkg.lantern.full",
+          "name": "灯影 · L4 小调编配",
+          "level": 4,
+          "label": "L4",
+          "bpm": 60,
+          "measures": 12,
+          "skillDeps": [
+            "chord.minor",
+            "chord.progression",
+            "chord.triad",
+            "clef.bass",
+            "clef.treble",
+            "hands.alternate",
+            "hands.both",
+            "hands.together",
+            "key.minor",
+            "pos.expand",
+            "pos.five",
+            "pos.shift",
+            "rhythm.eighth"
+          ],
+          "rights": {
+            "type": "original",
+            "attribution": "Piano Buddy 教学编配（原创，D 小调 4/4，右手八分音符旋律，左手柱式和弦）"
+          }
+        }
+      ]
+    },
+    {
+      "songId": "song.wind-chime",
+      "title": "风铃",
+      "composer": "Piano Buddy",
+      "arrangements": [
+        {
+          "arrangementId": "arr.wind-chime.full",
+          "packageId": "pkg.wind-chime.full",
+          "name": "风铃 · L6 十六分音符编配",
+          "level": 6,
+          "label": "L6",
+          "bpm": 48,
+          "measures": 12,
+          "skillDeps": [
+            "clef.bass",
+            "clef.treble",
+            "hands.both",
+            "hands.together",
+            "key.c",
+            "pos.expand",
+            "pos.five",
+            "pos.leap",
+            "pos.shift",
+            "rhythm.sixteenth",
+            "texture.broken"
+          ],
+          "rights": {
+            "type": "original",
+            "attribution": "Piano Buddy 教学编配（原创，4/4 拍，右手十六分音符跑动与六度/八度跳进，左手分解和弦）"
           }
         }
       ]
@@ -107,6 +248,241 @@
           "rights": {
             "type": "public-domain",
             "attribution": "Ludwig van Beethoven (public domain)"
+          }
+        }
+      ]
+    },
+    {
+      "songId": "song.corridor",
+      "title": "回廊",
+      "composer": "Piano Buddy",
+      "arrangements": [
+        {
+          "arrangementId": "arr.corridor.full",
+          "packageId": "pkg.corridor.full",
+          "name": "回廊 · L6 一个降号编配",
+          "level": 6,
+          "label": "L6",
+          "bpm": 54,
+          "measures": 12,
+          "skillDeps": [
+            "chord.triad",
+            "clef.bass",
+            "clef.treble",
+            "hands.alternate",
+            "hands.both",
+            "hands.together",
+            "key.one-flat",
+            "pos.expand",
+            "pos.five",
+            "pos.leap",
+            "pos.shift",
+            "rhythm.sixteenth"
+          ],
+          "rights": {
+            "type": "original",
+            "attribution": "Piano Buddy 教学编配（原创，F 大调 4/4，右手十六分跑动与八度跳进，左手分解和弦换位）"
+          }
+        }
+      ]
+    },
+    {
+      "songId": "song.gust",
+      "title": "疾风",
+      "composer": "Piano Buddy",
+      "arrangements": [
+        {
+          "arrangementId": "arr.gust.full",
+          "packageId": "pkg.gust.full",
+          "name": "疾风 · L6 跑动编配",
+          "level": 6,
+          "label": "L6",
+          "bpm": 52,
+          "measures": 12,
+          "skillDeps": [
+            "chord.triad",
+            "clef.bass",
+            "clef.treble",
+            "hands.alternate",
+            "hands.both",
+            "hands.together",
+            "key.c",
+            "pos.expand",
+            "pos.five",
+            "pos.leap",
+            "pos.shift",
+            "rhythm.sixteenth"
+          ],
+          "rights": {
+            "type": "original",
+            "attribution": "Piano Buddy 教学编配（原创，4/4 拍，右手十六分音符跑动与六度/八度跳进，左手分解和弦换位）"
+          }
+        }
+      ]
+    },
+    {
+      "songId": "song.dusk",
+      "title": "暮色",
+      "composer": "Piano Buddy",
+      "arrangements": [
+        {
+          "arrangementId": "arr.dusk.full",
+          "packageId": "pkg.dusk.full",
+          "name": "暮色 · L4+ 小调编配",
+          "level": 4,
+          "label": "L4+",
+          "bpm": 66,
+          "measures": 12,
+          "skillDeps": [
+            "clef.bass",
+            "clef.treble",
+            "hands.alternate",
+            "hands.both",
+            "hands.together",
+            "key.minor",
+            "pos.expand",
+            "pos.five",
+            "pos.shift",
+            "rhythm.eighth"
+          ],
+          "rights": {
+            "type": "original",
+            "attribution": "Piano Buddy 教学编配（原创，E 小调 3/4，右手八分音符旋律，左手分解和弦）"
+          }
+        }
+      ]
+    },
+    {
+      "songId": "song.evening-breeze",
+      "title": "晚风",
+      "composer": "Piano Buddy",
+      "arrangements": [
+        {
+          "arrangementId": "arr.evening-breeze.full",
+          "packageId": "pkg.evening-breeze.full",
+          "name": "晚风 · L4+ 连音编配",
+          "level": 4,
+          "label": "L4+",
+          "bpm": 66,
+          "measures": 9,
+          "skillDeps": [
+            "clef.bass",
+            "clef.treble",
+            "hands.both",
+            "hands.together",
+            "key.c",
+            "pos.five",
+            "rhythm.eighth",
+            "texture.broken"
+          ],
+          "rights": {
+            "type": "original",
+            "attribution": "Piano Buddy 教学编配（原创，3/4 弱起与跨小节延音）"
+          }
+        }
+      ]
+    },
+    {
+      "songId": "song.little-boat",
+      "title": "小船",
+      "composer": "Piano Buddy",
+      "arrangements": [
+        {
+          "arrangementId": "arr.little-boat.full",
+          "packageId": "pkg.little-boat.full",
+          "name": "小船 · L5 6/8 编配",
+          "level": 5,
+          "label": "L5",
+          "bpm": 60,
+          "measures": 12,
+          "skillDeps": [
+            "chord.minor",
+            "chord.progression",
+            "chord.triad",
+            "clef.bass",
+            "clef.treble",
+            "hands.alternate",
+            "hands.both",
+            "hands.together",
+            "key.c",
+            "meter.six-eight",
+            "pos.expand",
+            "pos.five",
+            "pos.shift",
+            "rhythm.dotted"
+          ],
+          "rights": {
+            "type": "original",
+            "attribution": "Piano Buddy 教学编配（原创，6/8 拍，右手八分音符旋律，左手根音 + 柱式和弦）"
+          }
+        }
+      ]
+    },
+    {
+      "songId": "song.starlight",
+      "title": "星光",
+      "composer": "Piano Buddy",
+      "arrangements": [
+        {
+          "arrangementId": "arr.starlight.full",
+          "packageId": "pkg.starlight.full",
+          "name": "星光 · L5 三连音编配",
+          "level": 5,
+          "label": "L5",
+          "bpm": 60,
+          "measures": 12,
+          "skillDeps": [
+            "chord.minor",
+            "chord.progression",
+            "chord.triad",
+            "clef.bass",
+            "clef.treble",
+            "hands.alternate",
+            "hands.both",
+            "hands.together",
+            "key.c",
+            "pos.expand",
+            "pos.five",
+            "pos.shift",
+            "rhythm.triplet"
+          ],
+          "rights": {
+            "type": "original",
+            "attribution": "Piano Buddy 教学编配（原创，4/4 拍，右手四分音符三连音，左手全音符柱式和弦）"
+          }
+        }
+      ]
+    },
+    {
+      "songId": "song.rain-alley",
+      "title": "雨巷",
+      "composer": "Piano Buddy",
+      "arrangements": [
+        {
+          "arrangementId": "arr.rain-alley.full",
+          "packageId": "pkg.rain-alley.full",
+          "name": "雨巷 · L4 小调编配",
+          "level": 4,
+          "label": "L4+",
+          "bpm": 72,
+          "measures": 12,
+          "skillDeps": [
+            "chord.minor",
+            "chord.progression",
+            "chord.triad",
+            "clef.bass",
+            "clef.treble",
+            "hands.both",
+            "hands.together",
+            "key.minor",
+            "pos.expand",
+            "pos.five",
+            "pos.shift",
+            "rhythm.quarter"
+          ],
+          "rights": {
+            "type": "original",
+            "attribution": "Piano Buddy 教学编配（原创，A 小调 3/4，左手柱式和弦）"
           }
         }
       ]

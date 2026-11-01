@@ -1,5 +1,5 @@
+import { performanceMeasures } from "./repeats";
 import type { Hand, Measure, NoteEvent, Score } from "./types";
-import { DURATION_BEATS } from "./vocabulary";
 
 /** 曲库「分段跟弹」的一段：从 start 到 end（0 起，不含 end）。 */
 export type ScoreSegment = {
@@ -62,6 +62,12 @@ export function sliceScore(
   // 弱起只属于「从第一小节开始」的那一段。中间切出来的段落首小节是整小节，
   // 继续带着 pickup 会让 isAllowed 与跟弹的小节线都算错。
   if (from > 0) delete sliced.pickup;
+  // 反复/导航按切片重映射；只保留两端都在段内的段落，半截的反复只会让人困惑。
+  delete sliced.repeats;
+  delete sliced.navigation;
+  const structure = sliceStructure(score, from, to);
+  if (structure.repeats) sliced.repeats = structure.repeats;
+  if (structure.navigation) sliced.navigation = structure.navigation;
   return sliced;
 }
 
@@ -85,28 +91,60 @@ export function segmentBeatRange(
   hand: Hand | "BOTH",
   segment: { start: number; end: number },
 ): { startBeat: number; endBeat: number } {
-  const reference: Hand | null =
-    hand === "BOTH"
-      ? score.hands.includes("RH")
-        ? "RH"
-        : score.hands[0] ?? null
-      : hand;
-  const measures = reference ? score.staves[reference]?.measures ?? [] : [];
   const total = measureCount(score);
   const from = clamp(segment.start, 0, total);
   const to = clamp(segment.end, from, total);
 
-  let startBeat = 0;
-  let endBeat = 0;
-  for (let index = 0; index < measures.length && index < to; index += 1) {
-    endBeat += measureBeats(measures[index]);
-    if (index < from) startBeat = endBeat;
+  // 走演奏顺序：反复之后的段落，拍坐标不再等于前面小节的线性累加。
+  const layout = performanceMeasures(score, hand);
+  const totalBeats = layout.reduce(
+    (end, measure) => Math.max(end, measure.startBeat + measure.beats),
+    0,
+  );
+  const startOf = (measureIndex: number): number => {
+    const found = layout.find((measure) => measure.number === measureIndex + 1);
+    return found ? found.startBeat : totalBeats;
+  };
+  if (to <= from) {
+    const at = startOf(from);
+    return { startBeat: at, endBeat: at };
   }
-  return { startBeat, endBeat: Math.max(endBeat, startBeat) };
+
+  let startBeat: number | null = null;
+  let endBeat = 0;
+  for (const performed of layout) {
+    if (performed.number === from + 1 && startBeat === null) startBeat = performed.startBeat;
+    if (performed.number >= from + 1 && performed.number <= to) {
+      endBeat = performed.startBeat + performed.beats;
+    }
+  }
+  return { startBeat: startBeat ?? 0, endBeat: Math.max(endBeat, startBeat ?? 0) };
 }
 
-function measureBeats(measure: Measure): number {
-  return measure.notes.reduce((sum, note) => sum + (DURATION_BEATS[note.duration] ?? 0), 0);
+/** 切片后的反复/导航：两端都在段内才保留，并平移到以段首为 0。 */
+function sliceStructure(
+  score: Score,
+  from: number,
+  to: number,
+): Pick<Score, "repeats" | "navigation"> {
+  const repeats = (score.repeats ?? [])
+    .filter((span) => span.from >= from && span.to < to)
+    .map((span) => ({ ...span, from: span.from - from, to: span.to - from }));
+  const navigation = (score.navigation ?? [])
+    .filter((mark) => mark.at >= from && mark.at < to)
+    .map((mark) => ({ ...mark, at: mark.at - from }));
+
+  // 落点被切掉时，D.S./To Coda 失去目标，留在段里只会让校验报错。
+  const kinds = new Set(navigation.map((mark) => mark.kind));
+  const kept = navigation.filter((mark) => {
+    if (mark.kind === "ds") return kinds.has("segno");
+    if (mark.kind === "to-coda") return kinds.has("coda");
+    return true;
+  });
+  return {
+    ...(repeats.length > 0 ? { repeats } : {}),
+    ...(kept.length > 0 ? { navigation: kept } : {}),
+  };
 }
 
 function cloneMeasure(measure: Measure): Measure {

@@ -1,0 +1,39 @@
+{
+  "schemaVersion": 1,
+  "id": "pkg.starlight.full",
+  "songId": "song.starlight",
+  "arrangementId": "arr.starlight.full",
+  "songTitle": "星光",
+  "composer": "Piano Buddy",
+  "name": "星光 · L5 三连音编配",
+  "type": "song",
+  "version": "1.0.0",
+  "minAppVersion": "2.0.0",
+  "skillDeps": [
+    "chord.minor",
+    "chord.progression",
+    "chord.triad",
+    "clef.bass",
+    "clef.treble",
+    "hands.alternate",
+    "hands.both",
+    "hands.together",
+    "key.c",
+    "pos.expand",
+    "pos.five",
+    "pos.shift",
+    "rhythm.triplet"
+  ],
+  "difficulty": {
+    "level": 5,
+    "bpm": 60,
+    "repeat": 0.3,
+    "len": 12
+  },
+  "assets": ["content/score.json"],
+  "license": "original",
+  "rights": {
+    "type": "original",
+    "attribution": "Piano Buddy 教学编配（原创，4/4 拍，右手四分音符三连音，左手全音符柱式和弦）"
+  }
+}

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  barOfBeat,
   beatAt,
   beatText,
   countInFor,
@@ -14,7 +15,7 @@ import {
 } from "../src/practice/rhythm";
 import type { PlayTarget } from "../src/practice/playAnswer";
 import type { PlaybackQuestion } from "../src/practice/melodyTypes";
-import type { Score } from "../src/domain/types";
+import type { Measure, Score } from "../src/domain/types";
 import { planForScore } from "../src/practice/rhythm";
 
 /** 一条 4/4、四分音符、C4–D4–E4 的短旋律，够用且好算。 */
@@ -357,6 +358,31 @@ describe("planForScore", () => {
     expect(plan.slots.map((slot) => slot.startBeat)).toEqual([0, 1]);
   });
 
+  it("6/8 的网格仍以四分音符为一格：一小节 3 格", () => {
+    const base = scoreOf({ hands: ["RH"] });
+    const steps = ["C", "D", "E", "F", "G", "A"] as const;
+    const score: Score = {
+      ...base,
+      meter: { beats: 6, beatValue: 8 },
+      staves: {
+        RH: {
+          clef: "treble",
+          measures: [{
+            notes: steps.map((step, index) => ({
+              id: `s${index}`,
+              pitches: [{ step, octave: 4, alteration: 0 }],
+              duration: "8" as const,
+            })),
+          }],
+        },
+      },
+    };
+    const plan = planForScore(score, "RH");
+    expect(plan.beatsPerBar).toBe(3);
+    expect(plan.totalBeats).toBe(3);
+    expect(plan.measureStarts).toEqual([0]);
+  });
+
   it("skips rests instead of putting a slot there", () => {
     const plan = planForScore({
       ...scoreOf({ hands: ["RH"] }),
@@ -376,6 +402,31 @@ describe("planForScore", () => {
     });
     expect(plan.slots.map((slot) => slot.startBeat)).toEqual([1]);
     expect(plan.totalBeats).toBe(2);
+  });
+
+  it("lays out the grid in performance order when the score repeats", () => {
+    const oneMeasure = (id: string): Measure => ({
+      notes: [{ id, pitches: [{ step: "C", octave: 4, alteration: 0 }], duration: "w" }],
+    });
+    const score: Score = {
+      ...scoreOf({ hands: ["RH"] }),
+      repeats: [{ from: 0, to: 1 }],
+      staves: {
+        RH: {
+          clef: "treble",
+          measures: [oneMeasure("a"), oneMeasure("b"), oneMeasure("c")],
+        },
+      },
+    };
+
+    const plan = planForScore(score, "RH");
+    expect(plan.slots.map((slot) => slot.startBeat)).toEqual([0, 4, 8, 12, 16]);
+    expect(plan.measureStarts).toEqual([0, 4, 8, 12, 16]);
+    // 第二遍仍是第 1、2 小节，而不是被下标带成第 3、4 小节。
+    expect(plan.measureNumbers).toEqual([1, 2, 1, 2, 3]);
+    expect(plan.totalBeats).toBe(20);
+    expect(barOfBeat(plan, 8)).toEqual({ bar: 1, inBar: 1 });
+    expect(barOfBeat(plan, 12)).toEqual({ bar: 2, inBar: 1 });
   });
 });
 

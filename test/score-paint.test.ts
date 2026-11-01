@@ -15,6 +15,7 @@ import {
   soundingTotal,
 } from "../src/notation/scorePaint";
 import { renderGrandScore, renderScore } from "../src/notation/renderScore";
+import type { Measure, Score } from "../src/domain/types";
 
 function sounding(score: ReturnType<typeof generateL1>, hand: "RH" | "LH") {
   const events: { id: string; midi: number }[] = [];
@@ -84,6 +85,52 @@ describe("paintScoreProgress", () => {
       expect(element.querySelector("[data-played]")).toBeNull();
       expect(element.querySelector("[data-correct]")).toBeNull();
       expect(element.querySelector("[data-wrong]")).toBeNull();
+    } finally {
+      element.remove();
+    }
+  });
+
+  it("skips filler rests when painting a pickup measure", () => {
+    const q = (id: string, step: "C" | "D" | "E" | "F"): Measure["notes"][number] => ({
+      id,
+      pitches: [{ step, octave: 4, alteration: 0 }],
+      duration: "q",
+    });
+    const score: Score = {
+      id: "score.paint.pickup",
+      mode: "repertoire",
+      level: 2,
+      meter: { beats: 4, beatValue: 4 },
+      keySignature: "C",
+      hands: ["RH"],
+      bpm: 72,
+      pickup: 1,
+      staves: {
+        RH: {
+          clef: "treble",
+          measures: [
+            { notes: [q("p1", "C")] },
+            { notes: [q("p2", "D"), q("p3", "E"), q("p4", "F"), q("p5", "D")] },
+          ],
+        },
+      },
+    };
+
+    const element = document.createElement("div");
+    document.body.append(element);
+    try {
+      renderScore(element, score, "RH", false);
+      paintScoreProgress(element, score, "RH", {
+        playedCount: 0,
+        correctIds: new Set(["p1"]),
+        wrongIds: new Set(),
+      });
+      const groups = Array.from(element.querySelectorAll(".vf-stavenote"));
+      const fillers = groups.filter((group) => group.classList.contains("pb-filler-rest"));
+      expect(fillers.length).toBe(2);
+      expect(fillers.some((group) => group.hasAttribute("data-correct"))).toBe(false);
+      const notes = groups.filter((group) => !group.classList.contains("pb-filler-rest"));
+      expect(notes[0]?.getAttribute("data-correct")).toBe("true");
     } finally {
       element.remove();
     }
@@ -236,5 +283,29 @@ describe("measureForSounding", () => {
     } finally {
       element.remove();
     }
+  });
+
+  it("maps a repeated pass back to the same written measure", () => {
+    const whole = (id: string): Measure => ({
+      notes: [{ id, pitches: [{ step: "C", octave: 4, alteration: 0 }], duration: "w" }],
+    });
+    const score: Score = {
+      id: "score.paint.repeats",
+      mode: "repertoire",
+      level: 3,
+      meter: { beats: 4, beatValue: 4 },
+      keySignature: "C",
+      hands: ["RH"],
+      bpm: 72,
+      repeats: [{ from: 0, to: 1 }],
+      staves: {
+        RH: { clef: "treble", measures: [whole("m0"), whole("m1"), whole("m2")] },
+      },
+    };
+    // 演奏顺序 1–2–1–2–3：第二遍仍是谱面上的第 1、2 小节。
+    expect(measureForSounding(score, "RH", 0).current).toBe(1);
+    expect(measureForSounding(score, "RH", 2).current).toBe(1);
+    expect(measureForSounding(score, "RH", 4).current).toBe(3);
+    expect(measureForSounding(score, "RH", 9).current).toBe(3);
   });
 });

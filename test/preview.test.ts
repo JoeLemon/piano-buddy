@@ -37,6 +37,25 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
+describe("createPreviewPlayer with repeats", () => {
+  it("counts every performed pass in totalBeats", () => {
+    const whole = (id: string) => ({
+      notes: [{ id, pitches: [{ step: "C" as const, octave: 4, alteration: 0 as const }], duration: "w" as const }],
+    });
+    const score: Score = {
+      ...oneNote,
+      repeats: [{ from: 0, to: 1 }],
+      staves: {
+        RH: { clef: "treble", measures: [whole("a"), whole("b"), whole("c")] },
+      },
+    };
+    const player = createPreviewPlayer(score, "RH", 60);
+    // 1–2–1–2–3：五遍小节 × 4 拍。
+    expect(player.totalBeats).toBe(20);
+    player.stop();
+  });
+});
+
 describe("startMetronome", () => {
   it("skips beats that fell behind the audio clock and keeps scheduling", () => {
     vi.useFakeTimers();

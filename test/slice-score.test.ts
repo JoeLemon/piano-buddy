@@ -81,6 +81,37 @@ describe("sliceScore", () => {
     expect(sliced.staves.RH?.measures).toHaveLength(5);
     expect(sliced.hands).toEqual(["RH", "LH"]);
   });
+
+  it("remaps repeats that fit entirely inside the slice", () => {
+    const score = longScore();
+    score.repeats = [{ from: 1, to: 3 }];
+    const sliced = sliceScore(score, 1, 4);
+    expect(sliced.repeats).toEqual([{ from: 0, to: 2 }]);
+    // 切片不修改原谱。
+    expect(score.repeats).toEqual([{ from: 1, to: 3 }]);
+  });
+
+  it("drops a repeat that is only half inside the slice", () => {
+    const score = longScore();
+    score.repeats = [{ from: 1, to: 3 }];
+    // 终点 3 落在段外：留下半截反复只会让跟弹莫名跳回。
+    expect(sliceScore(score, 0, 3).repeats).toBeUndefined();
+  });
+
+  it("keeps navigation marks inside the slice and drops orphaned jumps", () => {
+    const score = longScore();
+    score.navigation = [
+      { at: 1, kind: "segno" },
+      { at: 2, kind: "ds" },
+    ];
+    const kept = sliceScore(score, 1, 4);
+    expect(kept.navigation).toEqual([
+      { at: 0, kind: "segno" },
+      { at: 1, kind: "ds" },
+    ]);
+    // 从第 3 小节切起：Segno 被切掉，D.S. 没有落点，不能留在段里。
+    expect(sliceScore(score, 2, 4).navigation).toBeUndefined();
+  });
 });
 
 describe("segmentBeatRange", () => {
@@ -119,6 +150,20 @@ describe("segmentBeatRange", () => {
     expect(segmentBeatRange(longScore(), "RH", { start: 4, end: 2 })).toEqual({
       startBeat: 16,
       endBeat: 16,
+    });
+  });
+
+  it("measures the segment in performance order when the score repeats", () => {
+    const score = longScore();
+    score.repeats = [{ from: 0, to: 1 }];
+    // 演奏顺序 1–2–1–2–3：前两小节弹两遍，第 3 小节从第 16 拍开始。
+    expect(segmentBeatRange(score, "RH", { start: 0, end: 2 })).toEqual({
+      startBeat: 0,
+      endBeat: 16,
+    });
+    expect(segmentBeatRange(score, "RH", { start: 2, end: 3 })).toEqual({
+      startBeat: 16,
+      endBeat: 20,
     });
   });
 });

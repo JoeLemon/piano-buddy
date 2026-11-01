@@ -1,8 +1,9 @@
-import { Factory, Renderer, Voice, type StemmableNote } from "vexflow";
+import { Factory, Renderer, Voice, Barline, Stave, type EasyScore, type StemmableNote } from "vexflow";
 import { pitchToMidi } from "../domain/pitch";
+import { navigationLabelsAt, repeatBarlines } from "../domain/repeats";
 import { samePitches, tiesFrom, tiesTo } from "../domain/tie";
 import type { Clef, Duration, Hand, KeySignature, Measure, NoteEvent, Pitch, Score, Step } from "../domain/types";
-import { DURATION_BEATS, keyAlteration } from "../domain/vocabulary";
+import { keyAlteration, meterQuarterBeats, noteBeats } from "../domain/vocabulary";
 
 const WHITE_STEPS: readonly Step[] = ["C", "D", "E", "F", "G", "A", "B"];
 const BLACK_STEPS: readonly Step[] = ["C", "D", "F", "G", "A"];
@@ -33,10 +34,8 @@ function naturalWidth(measureCount: number, gap: number): number {
 /** 补足拍数用的休止符时值（四分音符单位），从大到小贪心分解。 */
 const REST_FILL: readonly { duration: Duration; beats: number }[] = [
   { duration: "wr", beats: 4 },
-  { duration: "hd", beats: 3 },
-  { duration: "h", beats: 2 },
-  { duration: "qd", beats: 1.5 },
-  { duration: "q", beats: 1 },
+  { duration: "hr", beats: 2 },
+  { duration: "qr", beats: 1 },
   { duration: "8r", beats: 0.5 },
   { duration: "16r", beats: 0.25 },
 ];
@@ -128,38 +127,47 @@ export function renderScore(element: HTMLElement, score: Score, hand: Hand, show
   const budget = score.meter.beats * beatQuarters;
 
   const rendered: (StemmableNote[] | undefined)[] = [];
+  const renderedIndices: ((number | null)[] | undefined)[] = [];
+  const repeatMarks = repeatBarlines(score);
   stave.measures.forEach((measure, index) => {
-    const tokens = measureTokens(measure, stave.clef, score.keySignature);
+    const built = measureTokens(measure, stave.clef, score.keySignature);
     // VexFlow 的 voice 默认 STRICT：拍数不满一小节就抛 IncompleteVoice。
     // 练习谱面常有 3 个四分音符（音型、分解和弦、手位读谱），按记谱惯例
     // 在末尾补休止符——顺带修掉音型题三音组一直渲染不出来的老问题。
-    const used = measure.notes.reduce(
-      (sum, note) => sum + (DURATION_BEATS[note.duration] ?? 0),
-      0,
-    );
-    if (used > 0 && used < budget) {
+    const used = measure.notes.reduce((sum, note) => sum + noteBeats(note), 0);
+    if (used > 0 && used < budget - 1e-6) {
       const rests = restTokensFor(budget - used, stave.clef);
       // 弱起小节的缺口在**开头**：把休止符补在前面，音符就落在小节末的拍点上，
       // 和跟弹时钟听到的位置一致。补在后面会把它画成「第一拍起音」。
-      if (index === 0 && score.pickup !== undefined) tokens.unshift(...rests);
-      else tokens.push(...rests);
+      if (index === 0 && score.pickup !== undefined) {
+        built.tokens.unshift(...rests);
+        built.noteIndices.unshift(...rests.map(() => null));
+      } else {
+        built.tokens.push(...rests);
+        built.noteIndices.push(...rests.map(() => null));
+      }
     }
-    const line = tokens.join(", ");
+    const line = built.tokens.join(", ");
     if (!line) return;
     const notes = easy.notes(line, { clef: stave.clef });
+    applyTuplets(easy, notes, measure, built.noteIndices);
     rendered[index] = notes;
-    if (showFingers) addFingers(factory, notes, measure);
+    renderedIndices[index] = built.noteIndices;
+    if (showFingers) addFingers(factory, notes, measure, built.noteIndices);
+    addNavigation(factory, notes, built.noteIndices, score, index);
     const voice = easy.voice(notes, { time });
     const placement = placements[index];
     const system = factory.System({ x: placement.x, y: 90, width: placement.width });
     const renderedStave = system.addStave({ voices: [voice] });
+    applyRepeatBarlines(renderedStave, repeatMarks.get(index));
     if (index === 0) {
       renderedStave.addClef(stave.clef).addTimeSignature(time).addKeySignature(score.keySignature);
     }
   });
 
-  drawStaveTies(factory, stave.measures, rendered);
+  drawStaveTies(factory, stave.measures, rendered, renderedIndices);
   factory.draw();
+  markFillerRests(host, rendered, renderedIndices);
   styleFingerAnnotations(host);
   trimCanvas(host);
 }
@@ -187,7 +195,7 @@ export function renderGrandScore(element: HTMLElement, score: Score, showFingers
   // 看上去像「漏了音」而不是「从后面进来」。
   // 公式 = 谱号/调号/拍号固定占位 120 + 每拍 60；满拍时正好回到 360。
   const firstWidth = score.pickup
-    ? Math.max(150, Math.round(120 + 240 * (score.pickup / score.meter.beats)))
+    ? Math.max(150, Math.round(120 + 240 * (score.pickup / meterQuarterBeats(score.meter))))
     : 360;
   const natural = naturalWidth(measureCount, gap) - (360 - firstWidth);
   const scale = fitScale(element, natural);
@@ -212,21 +220,30 @@ export function renderGrandScore(element: HTMLElement, score: Score, showFingers
 
   const rightRendered: (StemmableNote[] | undefined)[] = [];
   const leftRendered: (StemmableNote[] | undefined)[] = [];
+  const rightIndices: ((number | null)[] | undefined)[] = [];
+  const leftIndices: ((number | null)[] | undefined)[] = [];
+  const repeatMarks = repeatBarlines(score);
   for (let index = 0; index < measureCount; index += 1) {
     const rightMeasure = right.measures[index];
     const leftMeasure = left.measures[index];
-    const rightLine = measureTokens(rightMeasure, right.clef, score.keySignature).join(", ");
-    const leftLine = measureTokens(leftMeasure, left.clef, score.keySignature).join(", ");
-    if (!rightLine || !leftLine) continue;
+    const rightBuilt = measureTokens(rightMeasure, right.clef, score.keySignature);
+    const leftBuilt = measureTokens(leftMeasure, left.clef, score.keySignature);
+    if (rightBuilt.tokens.length === 0 || leftBuilt.tokens.length === 0) continue;
 
-    const rightNotes = easy.notes(rightLine, { clef: right.clef });
-    const leftNotes = easy.notes(leftLine, { clef: left.clef });
+    const rightNotes = easy.notes(rightBuilt.tokens.join(", "), { clef: right.clef });
+    const leftNotes = easy.notes(leftBuilt.tokens.join(", "), { clef: left.clef });
+    applyTuplets(easy, rightNotes, rightMeasure, rightBuilt.noteIndices);
+    applyTuplets(easy, leftNotes, leftMeasure, leftBuilt.noteIndices);
     rightRendered[index] = rightNotes;
     leftRendered[index] = leftNotes;
+    rightIndices[index] = rightBuilt.noteIndices;
+    leftIndices[index] = leftBuilt.noteIndices;
     if (showFingers) {
-      addFingers(factory, rightNotes, rightMeasure);
-      addFingers(factory, leftNotes, leftMeasure);
+      addFingers(factory, rightNotes, rightMeasure, rightBuilt.noteIndices);
+      addFingers(factory, leftNotes, leftMeasure, leftBuilt.noteIndices);
     }
+    // 导航记号只画在上方谱表，两份重复反而看不清。
+    addNavigation(factory, rightNotes, rightBuilt.noteIndices, score, index);
 
     const placement = placements[index];
     const system = factory.System({
@@ -237,6 +254,8 @@ export function renderGrandScore(element: HTMLElement, score: Score, showFingers
     });
     const treble = system.addStave({ voices: [openVoice(factory, rightNotes, time)] });
     const bass = system.addStave({ voices: [openVoice(factory, leftNotes, time)] });
+    applyRepeatBarlines(treble, repeatMarks.get(index));
+    applyRepeatBarlines(bass, repeatMarks.get(index));
     if (index === 0) {
       treble.addClef(right.clef).addTimeSignature(time).addKeySignature(score.keySignature);
       bass.addClef(left.clef).addTimeSignature(time).addKeySignature(score.keySignature);
@@ -246,8 +265,8 @@ export function renderGrandScore(element: HTMLElement, score: Score, showFingers
     }
   }
 
-  drawStaveTies(factory, right.measures, rightRendered);
-  drawStaveTies(factory, left.measures, leftRendered);
+  drawStaveTies(factory, right.measures, rightRendered, rightIndices);
+  drawStaveTies(factory, left.measures, leftRendered, leftIndices);
   factory.draw();
   styleFingerAnnotations(host);
   trimCanvas(host);
@@ -270,17 +289,22 @@ function drawStaveTies(
   factory: Factory,
   measures: readonly Measure[],
   rendered: readonly (StemmableNote[] | undefined)[],
+  renderedIndices: readonly ((number | null)[] | undefined)[],
 ): void {
   measures.forEach((measure, measureIndex) => {
     const notes = rendered[measureIndex];
     if (!notes) return;
     measure.notes.forEach((note, noteIndex) => {
       if (!tiesTo(note)) return;
-      const from = notes[noteIndex];
+      const fromToken = renderedIndices[measureIndex]?.indexOf(noteIndex) ?? -1;
+      if (fromToken < 0) return;
+      const from = notes[fromToken];
       if (!from) return;
       const target = nextTieTarget(measures, measureIndex, noteIndex, note.pitches);
       if (!target) return;
-      const to = rendered[target.measure]?.[target.index];
+      const toToken = renderedIndices[target.measure]?.indexOf(target.index) ?? -1;
+      if (toToken < 0) return;
+      const to = rendered[target.measure]?.[toToken];
       if (!to) return;
       const indices = tieIndices(note.pitches, target.pitches);
       if (!indices) return;
@@ -342,12 +366,19 @@ function openVoice(factory: Factory, notes: StemmableNote[], time: string) {
   return voice.addTickables(notes);
 }
 
-function addFingers(factory: Factory, notes: StemmableNote[], measure: Measure): void {
+function addFingers(
+  factory: Factory,
+  notes: StemmableNote[],
+  measure: Measure,
+  noteIndices: readonly (number | null)[],
+): void {
   measure.notes.forEach((event, index) => {
     // 和弦音的每个音各有一个指法，合并显示（如 C-E-G → 1·3·5）。
     const fingers = (event.fingers ?? []).filter((finger) => finger >= 1 && finger <= 5);
     if (fingers.length === 0) return;
-    notes[index]?.addModifier(
+    const tokenIndex = noteIndices.indexOf(index);
+    if (tokenIndex < 0) return;
+    notes[tokenIndex]?.addModifier(
       factory.Annotation({
         text: fingers.length === 1 ? String(fingers[0]) : fingers.join("·"),
         vJustify: "top",
@@ -355,6 +386,46 @@ function addFingers(factory: Factory, notes: StemmableNote[], measure: Measure):
       }),
     );
   });
+}
+
+/**
+ * `|:` / `:|` 直接交给 VexFlow 的 barline 类型，比手画两条竖线可靠：
+ * 反复点、粗细和谱表宽度都由它按当前缩放排。
+ */
+function applyRepeatBarlines(
+  stave: Stave,
+  marks: { begin: boolean; end: boolean } | undefined,
+): void {
+  if (!marks) return;
+  if (marks.begin) stave.setBegBarType(Barline.type.REPEAT_BEGIN);
+  if (marks.end) stave.setEndBarType(Barline.type.REPEAT_END);
+}
+
+/**
+ * D.C./D.S./Fine/Coda 先画成谱表下方的一行小字。
+ *
+ * 没有用 VexFlow 的 `Repetition` 记号：它只认 Coda/Segno 两种图形，D.C. 文本
+ * 仍要另画，混着用反而多一套定位。文字挂在第一拍上，测试也能直接读到。
+ */
+function addNavigation(
+  factory: Factory,
+  notes: StemmableNote[],
+  noteIndices: readonly (number | null)[],
+  score: Score,
+  measureIndex: number,
+): void {
+  const labels = navigationLabelsAt(score, measureIndex);
+  if (labels.length === 0 || notes.length === 0) return;
+  // 弱起小节前面可能补了休止符；导航文字挂在第一个真实音符上。
+  const first = noteIndices.findIndex((index) => index !== null);
+  const tokenIndex = first >= 0 ? first : 0;
+  notes[tokenIndex]?.addModifier(
+    factory.Annotation({
+      text: labels.join(" · "),
+      vJustify: "bottom",
+      font: { family: "IBM Plex Sans, sans-serif", size: 12, weight: "600" },
+    }),
+  );
 }
 
 function styleFingerAnnotations(host: HTMLElement): void {
@@ -410,21 +481,89 @@ function trimCanvas(host: HTMLElement): void {
  * 所以这里维护「本小节当前生效的升降」：调号先铺底，遇到同音高的临时记号就写入，
  * 需要还原时显式加 `n`。这样 L3 的临时升降谱才能正确显示还原记号。
  */
-function measureTokens(measure: Measure, clef: Clef, key: KeySignature): string[] {
+type MeasureTokens = {
+  tokens: string[];
+  /** token 下标 → Measure.notes 下标；补出来的休止符是 null。 */
+  noteIndices: (number | null)[];
+};
+
+function measureTokens(measure: Measure, clef: Clef, key: KeySignature): MeasureTokens {
   const state = new Map<string, number>();
-  return measure.notes.map((note) => {
+  const tokens: string[] = [];
+  const noteIndices: (number | null)[] = [];
+  measure.notes.forEach((note, index) => {
     const duration = VEX_DURATION[note.duration];
-    if (note.pitches.length === 0) return `${restPitch(clef)}/${duration}`;
-    const tokens = note.pitches.map((pitch) => {
-      const slot = `${pitch.step}${pitch.octave}`;
-      const current = state.get(slot) ?? keyAlteration(key, pitch.step);
-      let accidental = "";
-      if (pitch.alteration !== current) {
-        accidental = pitch.alteration === 1 ? "#" : pitch.alteration === -1 ? "b" : "n";
-      }
-      state.set(slot, pitch.alteration);
-      return `${pitch.step}${accidental}${pitch.octave}`;
-    });
-    return tokens.length === 1 ? `${tokens[0]}/${duration}` : `(${tokens.join(" ")})/${duration}`;
+    if (note.pitches.length === 0) {
+      tokens.push(`${restPitch(clef)}/${duration}`);
+    } else {
+      const pitches = note.pitches.map((pitch) => {
+        const slot = `${pitch.step}${pitch.octave}`;
+        const current = state.get(slot) ?? keyAlteration(key, pitch.step);
+        let accidental = "";
+        if (pitch.alteration !== current) {
+          accidental = pitch.alteration === 1 ? "#" : pitch.alteration === -1 ? "b" : "n";
+        }
+        state.set(slot, pitch.alteration);
+        return `${pitch.step}${accidental}${pitch.octave}`;
+      });
+      tokens.push(pitches.length === 1 ? `${pitches[0]}/${duration}` : `(${pitches.join(" ")})/${duration}`);
+    }
+    noteIndices.push(index);
   });
+  return { tokens, noteIndices };
+}
+
+/**
+ * 补出来的休止符只是排版占位，不属于 `measure.notes`。
+ * `scorePaint` 按 DOM 顺序上色时要跳过它们，否则弱起/短小节会整体错位。
+ * 必须等 `factory.draw()` 之后才拿得到 SVG 节点。
+ */
+function markFillerRests(
+  host: HTMLElement,
+  rendered: readonly (StemmableNote[] | undefined)[],
+  renderedIndices: readonly ((number | null)[] | undefined)[],
+): void {
+  const groups = host.querySelectorAll(".vf-stavenote");
+  let domIndex = 0;
+  rendered.forEach((notes, measureIndex) => {
+    const indices = renderedIndices[measureIndex];
+    if (!notes || !indices) return;
+    indices.forEach((noteIndex) => {
+      if (noteIndex === null) groups.item(domIndex)?.classList.add("pb-filler-rest");
+      domIndex += 1;
+    });
+  });
+}
+
+/**
+ * 把同一组三连音的 token 交给 VexFlow 的 Tuplet。
+ *
+ * 谱面 token 仍按基础时值写（三个八分音符），Tuplet 会把它们的 tick 按 2/3
+ * 缩放；必须在 `easy.voice()` 之前调用，voice 才会按 1 拍而不是 1.5 拍校验。
+ */
+function applyTuplets(
+  easy: EasyScore,
+  notes: StemmableNote[],
+  measure: Measure,
+  noteIndices: readonly (number | null)[],
+): void {
+  let index = 0;
+  while (index < measure.notes.length) {
+    const id = measure.notes[index].tuplet;
+    if (!id) {
+      index += 1;
+      continue;
+    }
+    const group: StemmableNote[] = [];
+    let cursor = index;
+    while (cursor < measure.notes.length && measure.notes[cursor].tuplet === id) {
+      const tokenIndex = noteIndices.indexOf(cursor);
+      if (tokenIndex >= 0 && notes[tokenIndex]) group.push(notes[tokenIndex]);
+      cursor += 1;
+    }
+    if (group.length === 3) {
+      easy.tuplet(group, { num_notes: 3, notes_occupied: 2, bracketed: true });
+    }
+    index = cursor;
+  }
 }

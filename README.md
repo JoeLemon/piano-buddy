@@ -21,7 +21,7 @@
 | 学习档案 | 「我的」页回看最近 7 天逐条练习；导出/导入 JSON 备份（只含学习进度，不含外部曲库包） |
 | 练习指标 | 近 30 天练习时长/次数、按页面聚合的放弃点、错题与弱段重练的缺口命中率；一键导出 JSON |
 | 移动端 | Capacitor 壳（Android/iOS 工程已生成）+ 原生 BLE 通道：iOS 上也能连蓝牙键盘；`npm run cap:sync` 同步 |
-| CI | GitHub Actions：类型+构建、817 例单测、15 包内容 QA、曲库目录幂等、60 项 headless 验收 |
+| CI | GitHub Actions：类型+构建、817 例单测、15 包内容 QA、曲库目录幂等、67 项 headless 验收 |
 
 逐项能力、里程碑与待办清单见 `docs/开发进度与待办.md`。
 
@@ -259,11 +259,11 @@ npm run cap:ios      # 用 Xcode 打开 ios/（需要 macOS）
 | job | 内容 | 大概耗时 |
 |---|---|---|
 | `check` | `npm run build`（vue-tsc + vite）→ `npm test`（817 例）→ `validate:content`（15 包）→ `build:catalog` 后 `git diff --exit-code content/catalog.json` | 1–2 分钟 |
-| `headless` | `npx playwright-core install --with-deps chromium` → `npm run verify:all`（5 个脚本 / 60 项，`PB_SHOTS_DIR=shots`），失败时把 `shots/` 传成 artifact | 1 分钟 |
+| `headless` | `npx playwright-core install --with-deps chromium` → `npm run verify:all`（6 个脚本 / 67 项，`PB_SHOTS_DIR=shots`），失败时把 `shots/` 传成 artifact | 1 分钟 |
 | `android` | `npm run build` → `npx cap sync android` → JDK 21 → `./gradlew assembleDebug`，APK 传成 artifact | 2–3 分钟（首次含 Gradle 依赖下载） |
 | `ios` | `npm run build` → `npx cap sync ios` → `xcodebuild -target App -sdk iphonesimulator`（关签名，只验编译） | 4 分钟（macOS runner，编译含 SPM 解析） |
 
-首次实测：`check` 57 秒、`headless` 55 秒（装浏览器 18 秒，5 个脚本 25 秒）、
+首次实测：`check` 57 秒、`headless` 55 秒（装浏览器 18 秒，当时的 5 个脚本 25 秒）、
 `android` 163 秒（Gradle 112 秒，产出 4.2 MB debug APK）、`ios` 236 秒（编译 170 秒）。
 验收脚本断言的是 DOM 与文案、不做像素比对，所以 Linux 与 Windows 之间没有出现差异；
 Android 首次构建也没踩 JDK/SDK 的坑（runner 自带 SDK 36，AGP 会自动补齐缺的组件）。

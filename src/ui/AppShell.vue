@@ -735,4 +735,28 @@ h1 {
     padding: 0.32rem 0.5rem;
   }
 }
+
+/*
+ * 手机横屏：竖向只有三百多像素，顶栏 sticky 常驻会一直吃掉四分之一屏，
+ * 跟弹时键盘只能露出一半、要滚来滚去。横屏弹琴本来也不需要导航，所以
+ * 让顶栏跟着内容滚走，需要切页时滚回顶部即可。
+ *
+ * 桌面窗口高度小于 520 时也会命中——那时竖向空间同样紧张，行为一致。
+ */
+@media (orientation: landscape) and (max-height: 520px) {
+  .topbar {
+    position: static;
+  }
+
+  .bar {
+    min-height: 0;
+    padding-top: 0.3rem;
+    padding-bottom: 0.3rem;
+  }
+
+  .tab {
+    padding-top: 0.26rem;
+    padding-bottom: 0.34rem;
+  }
+}
 </style>

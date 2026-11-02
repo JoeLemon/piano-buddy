@@ -135,6 +135,19 @@ jobs:
           path: android/app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
 
+      # debug 通过不代表上架包能打：release 会走不同的资源合并与 AAB 打包路径。
+      # 没有 keystore 时产物未签名，正好只验证「能不能打包」，签名仍在本机做。
+      - name: 编译未签名 release AAB
+        working-directory: android
+        run: ./gradlew bundleRelease --no-daemon
+
+      - name: 上传未签名 AAB
+        uses: actions/upload-artifact@v4
+        with:
+          name: piano-buddy-unsigned-release-aab
+          path: android/app/build/outputs/bundle/release/*.aab
+          if-no-files-found: error
+
   ios:
     name: iOS 原生构建
     # macOS runner 按 10 倍计费，跑一次 5–10 分钟；这里只编译、不签名，

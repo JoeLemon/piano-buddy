@@ -119,7 +119,7 @@ keytool -genkeypair -v -keystore piano-buddy-release.jks \
 
 `keystore.properties`、`*.jks`、`*.keystore` 已在 `.gitignore` 里；**不要把
 签名文件或密码提交到仓库**。没有 `keystore.properties` 时 release 仍能编译，
-只是产物未签名——CI 用这种方式验证 R8 / 资源合并 / AAB 打包本身。
+只是产物未签名——CI 用这种方式验证 release 资源合并与 AAB 打包本身。
 
 ### 5.2 构建
 
@@ -176,7 +176,7 @@ CI 只在模拟器上关签名编译，验证 SPM 依赖、Info.plist 与插件�
 |---|---|
 | `check` | 版本号一致、图标一致、类型/构建、单测、内容 QA、catalog 幂等 |
 | `headless` | 6 个验收脚本 / 67 项，失败上传 `shots/` |
-| `android` | `cap sync` → JDK 21 → `assembleDebug`，APK 上传 artifact |
+| `android` | `cap sync` → JDK 21 → `assembleDebug` + `bundleRelease`，debug APK 与未签名 AAB 上传 artifact |
 | `ios` | `cap sync` → `xcodebuild -target App -sdk iphonesimulator` 关签名编译 |
 
 真机 BLE、系统授权弹窗、连接选择框仍只能人工验，清单见

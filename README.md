@@ -262,7 +262,7 @@ npm run cap:ios      # 用 Xcode 打开 ios/（需要 macOS）
 |---|---|---|
 | `check` | `version:check` → `icon:check` → `npm run build`（vue-tsc + vite）→ `npm test`（857 例）→ `validate:content`（17 包）→ `build:catalog` 后 `git diff --exit-code content/catalog.json` | 1–2 分钟 |
 | `headless` | `npx playwright-core install --with-deps chromium` → `npm run verify:all`（6 个脚本 / 67 项，`PB_SHOTS_DIR=shots`），失败时把 `shots/` 传成 artifact | 1 分钟 |
-| `android` | `npm run build` → `npx cap sync android` → JDK 21 → `./gradlew assembleDebug`，APK 传成 artifact | 2–3 分钟（首次含 Gradle 依赖下载） |
+| `android` | `npm run build` → `npx cap sync android` → JDK 21 → `./gradlew assembleDebug` + `bundleRelease`，debug APK 与未签名 AAB 传成 artifact | 3–4 分钟（首次含 Gradle 依赖下载） |
 | `ios` | `npm run build` → `npx cap sync ios` → `xcodebuild -target App -sdk iphonesimulator`（关签名，只验编译） | 4 分钟（macOS runner，编译含 SPM 解析） |
 
 首次实测：`check` 57 秒、`headless` 55 秒（装浏览器 18 秒，当时的 5 个脚本 25 秒）、

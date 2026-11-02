@@ -1,5 +1,6 @@
 import { inflateSync } from "node:zlib";
-import { resolve } from "node:path";
+import { readdirSync, readFileSync } from "node:fs";
+import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   BRAND,
@@ -154,7 +155,26 @@ describe("产物清单与仓库现状", () => {
     expect(drifted).toEqual([]);
     expect(total).toBe(iconTargets().length);
   });
+
+  it("Android 资源 XML 的注释里没有 --（aapt2 会直接判 XML 无效）", () => {
+    const dir = resolve(root, "android/app/src/main/res");
+    const files = xmlFiles(dir);
+    expect(files.length).toBeGreaterThan(0);
+    for (const file of files) {
+      const text = readFileSync(file, "utf8");
+      for (const match of text.matchAll(/<!--([\s\S]*?)-->/g)) {
+        expect(match[1], file).not.toContain("--");
+      }
+    }
+  });
 });
+
+function xmlFiles(dir: string): string[] {
+  return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+    const path = join(dir, entry.name);
+    return entry.isDirectory() ? xmlFiles(path) : [path];
+  }).filter((path) => path.endsWith(".xml"));
+}
 
 /** 最小 PNG 解码：只处理本项目生成的「无隔行 + filter 0」RGBA8。 */
 function decodeRgba(png: Buffer): Uint8Array {

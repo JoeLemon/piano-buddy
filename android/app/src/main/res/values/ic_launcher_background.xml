@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- 与 web 端 --pb-bg（#132f28 舞台深绿）保持一致；由 scripts/gen-app-icon.mjs 的品牌色决定 -->
+    <!-- 与 web 端 pb-bg（#132f28 舞台深绿）保持一致；由 scripts/gen-app-icon.mjs 的品牌色决定 -->
     <color name="ic_launcher_background">#132F28</color>
 </resources>

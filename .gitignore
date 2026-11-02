@@ -10,6 +10,11 @@ android/app/build/
 android/app/src/main/assets/public/
 android/app/src/main/assets/capacitor.config.json
 android/local.properties
+
+# 发布签名：keystore 与密码一旦入库就等于公开，只提交 .example 模板
+android/keystore.properties
+*.jks
+*.keystore
 ios/App/Pods/
 ios/App/build/
 ios/App/App/public/

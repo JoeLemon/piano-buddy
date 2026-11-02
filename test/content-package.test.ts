@@ -46,6 +46,13 @@ describe("示例曲目包", () => {
     expect(rated.level).toBeLessThanOrEqual(manifest.difficulty!.level);
   });
 
+  it("声明了高于当前 App 的 minAppVersion 时内容 QA 报错", () => {
+    const manifest = parseManifest(manifestText, knownSkillIds()).manifest!;
+    const result = validateSongContent(score, { ...manifest, minAppVersion: "99.0.0" });
+    expect(result.ok).toBe(false);
+    expect(result.errors.some((text) => text.includes("99.0.0") && text.includes("当前是"))).toBe(true);
+  });
+
   it("反复段落写不闭合时内容 QA 直接报错", () => {
     const manifest = parseManifest(manifestText, knownSkillIds()).manifest!;
     const broken: Score = { ...score, repeats: [{ from: 0, to: 99 }] };

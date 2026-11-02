@@ -76,8 +76,10 @@ describe("MeView 最近练习", () => {
       props: { profile: profile({ practiceLog: [{ at: NOON, kind: "reading", ms: 20 * MINUTE }] }) },
     });
 
-    expect(wrapper.get("[data-test=me-practice]").text()).toContain("今日练习");
+    expect(wrapper.get("[data-test=me-practice]").text()).toContain("今日停留");
     expect(wrapper.get("[data-test=me-practice]").text()).toContain("20 分钟");
+    expect(wrapper.get("[data-test=me-practice-note]").text()).toContain("停留时长");
+    expect(wrapper.get("[data-test=me-practice-note]").text()).toContain("答题数");
     expect(wrapper.find("[data-test=me-settings]").exists()).toBe(true);
   });
 

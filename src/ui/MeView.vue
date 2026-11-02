@@ -168,10 +168,10 @@ const practiceRows = computed(() => {
       ? "还没答过"
       : `共 ${stats.answered} 题 · 正确率 ${Math.round((stats.correct / stats.answered) * 100)}%`;
   return [
-    { label: "今日练习", value: `${practice.value.todayCount} 条 · ${formatMinutes(practice.value.todayMs)}` },
+    { label: "今日停留", value: `${practice.value.todayCount} 条 · ${formatMinutes(practice.value.todayMs)}` },
     { label: "连续练习", value: `${practice.value.streak} 天` },
-    { label: "累计练习", value: `${practice.value.totalCount} 条 · ${formatMinutes(practice.value.totalMs)}` },
-    { label: "乐理答题", value: quiz },
+    { label: "累计停留", value: `${practice.value.totalCount} 条 · ${formatMinutes(practice.value.totalMs)}` },
+    { label: "乐理答题数", value: quiz },
   ];
 });
 
@@ -210,6 +210,9 @@ const metricsRows = computed(() => {
           <dd>{{ row.value }}</dd>
         </div>
       </dl>
+      <p class="muted" data-test="me-practice-note">
+        练习记录按页面停留时长累计；乐理答题按答题数统计，两者不是同一口径。
+      </p>
     </section>
 
     <section class="section" data-test="me-history">

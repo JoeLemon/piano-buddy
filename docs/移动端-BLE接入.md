@@ -86,6 +86,8 @@ src/midi/access.ts        对外唯一入口（subscribeMidi + 各键盘开关�
 
 ## 4. 构建与真机调试
 
+> 发版（版本号、图标、字体、签名、AAB/Archive）见 `docs/App发布清单.md`。
+
 ```bash
 npm run build        # vue-tsc + vite build → dist/
 npm run cap:sync     # 等价于 npm run build && npx cap sync（同步 dist 与插件）
@@ -121,10 +123,10 @@ npm run cap:ios      # Xcode 打开 ios/（需要 macOS）
 | 限制 | 影响 | 现状 |
 |---|---|---|
 | iOS 模拟器不支持 BLE | CI/模拟器上无法验证连接 | 真机验证；单测用假插件覆盖逻辑 |
-| Android 系统定位服务关闭 | 部分机型扫不到设备 | 提示文案已覆盖；未做 `openLocationSettings()` 引导 |
+| Android 系统定位服务关闭 | 部分机型扫不到设备 | 设置抽屉显示「系统定位服务」状态，并提供「去打开」跳系统设置 |
 | 插件只支持 BLE，不支持经典蓝牙 | 老式蓝牙键盘（Classic）连不上 | 产品只承诺 BLE MIDI |
 | 没有后台蓝牙 | App 退到后台断连 | 前台练习场景可接受 |
-| Google Fonts 走网络 | 真机离线时回落到系统字体 | 排版仍可用；如需离线可改自托管字体 |
+| 字体自托管 | 无网络时不再等 Google Fonts 超时 | `public/fonts/` 随 App 分发；中文仍走系统字体 |
 | 首次扫描按 MIDI 服务过滤 | 少数键盘配对后不广播服务列表 | 找不到设备时自动再扫一次「全部设备」 |
 
 ---
@@ -144,5 +146,7 @@ npm run cap:ios      # Xcode 打开 ios/（需要 macOS）
 
 `test/ble.test.ts`（11 例）继续覆盖浏览器通道与解码器。两条通道共用一份解码器，
 所以「手机与桌面的判定一致」这件事是被测试钉住的，不是靠约定。
+`test/shell-nav.test.ts` 还覆盖了设置抽屉里的 Android 定位服务诊断：查不到时不显示、
+关闭时给「去打开」、跳转失败不假报成功。
 
-真机回归目前仍靠上面的自检清单：CI 会跑类型/单测/内容 QA 与 60 项 headless 验收，但跑不了真机 BLE（模拟器不支持蓝牙），这一段仍是人工。
+真机回归目前仍靠上面的自检清单：CI 会跑类型/单测/内容 QA 与 67 项 headless 验收，但跑不了真机 BLE（模拟器不支持蓝牙），这一段仍是人工。

@@ -74,6 +74,7 @@ describe("曲库目录", () => {
       "song.little-boat",
       "song.starlight",
       "song.rain-alley",
+      "song.highland",
     ]);
 
     const song = catalog.songs.find((item) => item.songId === "song.ode-to-joy")!;

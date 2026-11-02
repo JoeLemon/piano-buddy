@@ -14,6 +14,11 @@
     "export:demo": "vite-node scripts/export-demo-motion.ts",
     "verify:all": "node scripts/verify-all.mjs",
     "verify:install": "playwright-core install chromium",
+    "version:sync": "vite-node scripts/sync-app-version.ts",
+    "version:check": "vite-node scripts/sync-app-version.ts --check",
+    "icon:gen": "node scripts/gen-app-icon.mjs",
+    "icon:check": "node scripts/gen-app-icon.mjs --check",
+    "fonts:fetch": "node scripts/fetch-fonts.mjs",
     "cap:sync": "npm run build && cap sync",
     "cap:android": "cap open android",
     "cap:ios": "cap open ios"

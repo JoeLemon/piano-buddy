@@ -54,7 +54,7 @@ const packages = loadPackages();
 
 describe("曲库内容", () => {
   it("keeps every package inside the vocabulary and above its declared level", () => {
-    expect(packages.length).toBeGreaterThanOrEqual(16);
+    expect(packages.length).toBeGreaterThanOrEqual(17);
 
     for (const item of packages) {
       const check = validateSongContent(item.score, item.manifest);
@@ -264,6 +264,58 @@ describe("《疾风》L6 跑动曲", () => {
     // 第一拍右手 C4 与左手 C3 必须合并成一个「一起按」的位置。
     expect(plan.slots[0]?.midis).toEqual([48, 60]);
 
+    const msPerBeat = 60000 / score.bpm;
+    const hits = plan.slots.flatMap((slot, slotIndex) =>
+      slot.midis.map((midi) => ({ midi, slotIndex, atMs: (slot.startBeat + 4) * msPerBeat })),
+    );
+    const result = gradeRhythm(plan, hits, 0, 4);
+    expect(result.total).toBe(plan.slots.length);
+    expect(result.onCount).toBe(plan.slots.length);
+  });
+});
+
+describe("《远山》L6 转位与跨小节连音", () => {
+  const score = scoreOf("song.highland.l6");
+
+  it("is a G major sixteenth study built on inverted triads", () => {
+    expect(score.keySignature).toBe("G");
+    expect(score.meter).toEqual({ beats: 4, beatValue: 4 });
+    expect(score.bpm).toBe(50);
+    expect(score.staves.RH?.measures).toHaveLength(12);
+    expect(rateScore(score).level).toBe(6);
+
+    const skills = requiredSkillsForScore(score);
+    expect(skills).toContain("key.one-sharp");
+    expect(skills).toContain("rhythm.sixteenth");
+    expect(skills).toContain("chord.inversion");
+    expect(skills).toContain("chord.minor");
+    expect(skills).toContain("pos.leap");
+
+    // 每小节第一拍都是转位三和弦：这是这首曲子专门补的 L6 织体。
+    const chords = score.staves.RH!.measures.map((measure) => measure.notes[0]!);
+    expect(chords.every((note) => note.pitches.length === 3)).toBe(true);
+    const infos = chords.map((note) => identifyChord(note.pitches));
+    expect(infos.every((info) => info !== null && info.inversion > 0)).toBe(true);
+    expect(infos.some((info) => info?.quality === "min")).toBe(true);
+  });
+
+  it("ties the left-hand D across the bar line without re-striking", () => {
+    const start = score.staves.LH!.measures[3].notes[1]!;
+    const stop = score.staves.LH!.measures[4].notes[0]!;
+    expect(start.tie).toBe("start");
+    expect(stop.tie).toBe("stop");
+    expect(stop.pitches).toEqual(start.pitches);
+
+    const plan = planForScore(score, "BOTH");
+    // 第 4 小节最后一拍有 D3 起音；第 5 小节第 1 拍是同一个音的延续，
+    // 不能再产生一次按键事件。
+    expect(plan.slots.filter((slot) => slot.startBeat === 14).flatMap((slot) => slot.midis)).toContain(50);
+    expect(plan.slots.filter((slot) => slot.startBeat === 16).flatMap((slot) => slot.midis)).not.toContain(50);
+  });
+
+  it("plays through end to end without a wrong note", () => {
+    const plan = planForScore(score, "BOTH");
+    expect(plan.beatsPerBar).toBe(4);
     const msPerBeat = 60000 / score.bpm;
     const hits = plan.slots.flatMap((slot, slotIndex) =>
       slot.midis.map((midi) => ({ midi, slotIndex, atMs: (slot.startBeat + 4) * msPerBeat })),

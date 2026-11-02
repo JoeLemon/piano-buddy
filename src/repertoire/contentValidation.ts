@@ -4,6 +4,7 @@ import { repeatErrors } from "../domain/repeats";
 import { tieErrors } from "../domain/tie";
 import { tupletErrors } from "../domain/tuplets";
 import type { PackageManifest } from "./package";
+import { minAppVersionError } from "./packageBundle";
 import { rateScore } from "./difficulty";
 import { requiredSkillsForScore } from "./skillGraph";
 import { scoreToMotion, validateMotion } from "./motion";
@@ -40,6 +41,11 @@ export function validateSongContent(score: Score, manifest: PackageManifest): Co
   if (manifest.type !== "song") {
     return { ok: false, errors: ["validateSongContent 只接受 type=song 的包"], warnings };
   }
+
+  // 内置曲库会随 App 一起发布：如果包的 minAppVersion 比当前 App 还高，
+  // 目录里会出现一个本版永远装不上的编配，必须在生成 catalog 前拦下。
+  const minAppError = minAppVersionError(manifest);
+  if (minAppError) errors.push(minAppError);
 
   const declaredLevel = manifest.difficulty?.level;
   if (declaredLevel == null) errors.push("song 包必须声明 difficulty.level");

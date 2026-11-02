@@ -16,6 +16,12 @@ export {
 } from "./ble";
 export type { BleTransportId } from "./ble";
 export {
+  androidLocationEnabled,
+  isNativeBleSupported,
+  openSystemBluetoothSettings,
+  openSystemLocationSettings,
+} from "./bleNative";
+export {
   BLACK_ROW_CAPS,
   WHITE_ROW_CAPS,
   activeZone,

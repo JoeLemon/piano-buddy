@@ -1,4 +1,4 @@
-import { isNativeApp } from "../platform";
+import { appPlatform, isNativeApp } from "../platform";
 import {
   bleError,
   MIDI_IO_CHARACTERISTIC_UUID,
@@ -45,6 +45,12 @@ export type NativeBlePlugin = {
     ): Promise<void>;
     stopNotifications(deviceId: string, service: string, characteristic: string): Promise<void>;
     disconnect(deviceId: string): Promise<void>;
+    /** Android 专属：系统定位服务是否开着（11 及以下扫 BLE 的前提）。 */
+    isLocationEnabled?(): Promise<{ value: boolean }>;
+    /** Android 专属：跳系统「定位」设置页。 */
+    openLocationSettings?(): Promise<void>;
+    /** Android 专属：跳系统「蓝牙」设置页。 */
+    openBluetoothSettings?(): Promise<void>;
   };
 };
 
@@ -67,6 +73,57 @@ export function setNativeBlePlugin(plugin: NativeBlePlugin | null): void {
 /** 原生通道只在 App 里成立；浏览器里 `window.Capacitor` 不存在。 */
 export function isNativeBleSupported(): boolean {
   return isNativeApp();
+}
+
+/**
+ * Android 11 及以下机型扫描 BLE 需要系统定位服务开着（Android 12+ 有
+ * `neverForLocation` 就不再需要）。这些 API 只有 Android 有，其它平台或插件
+ * 缺方法时一律返回 null / false，由调用方决定显不显示这一行。
+ */
+async function androidClient(): Promise<NativeBlePlugin["BleClient"] | null> {
+  if (!isNativeApp() || appPlatform() !== "android") return null;
+  try {
+    const client = (await loadPlugin()).BleClient;
+    return client ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/** 系统定位服务是否开着；查不了（非 Android / 插件没这个方法）时返回 null。 */
+export async function androidLocationEnabled(): Promise<boolean | null> {
+  const client = await androidClient();
+  if (!client || typeof client.isLocationEnabled !== "function") return null;
+  try {
+    const result = await client.isLocationEnabled();
+    return result?.value === true;
+  } catch {
+    return null;
+  }
+}
+
+/** 跳系统「定位」设置页。返回是否真的跳了（跳不了就让界面留在原处）。 */
+export async function openSystemLocationSettings(): Promise<boolean> {
+  const client = await androidClient();
+  if (!client || typeof client.openLocationSettings !== "function") return false;
+  try {
+    await client.openLocationSettings();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** 跳系统「蓝牙」设置页（用户把蓝牙关了时比反复试点「连接」有用）。 */
+export async function openSystemBluetoothSettings(): Promise<boolean> {
+  const client = await androidClient();
+  if (!client || typeof client.openBluetoothSettings !== "function") return false;
+  try {
+    await client.openBluetoothSettings();
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function messageOf(error: unknown): string {

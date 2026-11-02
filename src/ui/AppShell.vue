@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref, watch } from "vue";
 import type { InstalledPackage } from "../repertoire";
+import { androidLocationEnabled, openSystemLocationSettings } from "../midi/access";
 import PackageManager from "./PackageManager.vue";
 
 export type ShellSection = { id: string; label: string };
@@ -73,10 +74,30 @@ watch(settingsOpen, (open) => {
   if (typeof document !== "undefined") {
     document.body.style.overflow = open ? "hidden" : "";
   }
+  // 用户可能刚去系统设置里打开（或关掉）了定位服务，每次开抽屉都重新问一次，
+  // 免得诊断信息停在进来时那一刻。
+  if (open && props.nativeApp) void refreshLocationState();
 });
+
+/** Android 11 及以下的定位服务状态；非 Android / 插件没这个方法时为 null（不显示这一行）。 */
+const locationEnabled = ref<boolean | null>(null);
+const locationJumped = ref(false);
+
+async function refreshLocationState() {
+  locationEnabled.value = await androidLocationEnabled();
+  if (locationEnabled.value === true) locationJumped.value = false;
+}
+
+async function jumpToLocationSettings() {
+  const jumped = await openSystemLocationSettings();
+  locationJumped.value = jumped;
+  // 跳过去用户不一定会改，回来这一趟再问一次比让用户自己汇报更可靠。
+  await refreshLocationState();
+}
 
 onMounted(() => {
   if (typeof window !== "undefined") window.addEventListener("keydown", onKeydown);
+  if (props.nativeApp) void refreshLocationState();
 });
 
 onBeforeUnmount(() => {
@@ -293,7 +314,19 @@ onBeforeUnmount(() => {
               <div class="diag-row"><dt>Web MIDI 连接</dt><dd :class="webMidiConnected ? 'ok' : 'muted'">{{ webMidiConnected ? "已连接" : "未连接" }}</dd></div>
               <div class="diag-row"><dt>蓝牙设备</dt><dd :class="midiDeviceName ? 'ok' : 'muted'">{{ midiDeviceName ?? "无" }}</dd></div>
               <div class="diag-row"><dt>最近错误</dt><dd :class="midiError ? 'warn' : 'muted'">{{ midiError ?? "无" }}</dd></div>
+              <div v-if="locationEnabled !== null" class="diag-row">
+                <dt>系统定位服务</dt>
+                <dd :class="locationEnabled ? 'ok' : 'warn'" data-test="diag-location">{{ locationEnabled ? "已开启" : "已关闭" }}</dd>
+              </div>
             </dl>
+            <p v-if="locationEnabled === false" class="diag-hint" data-test="diag-location-hint">
+              Android 11 及以下机型要开着定位服务才扫得到蓝牙设备（Android 12+
+              已用「扫描不用于定位」的声明免掉这项要求）。
+              <button type="button" class="chip chip-action" data-test="diag-open-location" @click="jumpToLocationSettings">
+                去打开
+              </button>
+              <span v-if="locationJumped">已带你到系统设置，改完回来再看这一行。</span>
+            </p>
             <p v-if="!bleAvailable" class="diag-hint" data-test="diag-ble-hint">
               {{ nativeApp
                 ? "这台设备的系统版本没有可用的蓝牙接口，请改用 USB MIDI 或屏幕琴键。"

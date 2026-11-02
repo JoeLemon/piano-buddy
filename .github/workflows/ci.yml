@@ -1,8 +1,8 @@
 name: CI
 
 # 一条命令能跑的东西，就不该只靠本地手跑。
-# 两个 job 分开的原因：headless 验收要下载 chromium（几分钟），
-# 类型/单测/内容校验只要几十秒——坏在代码上时没必要等浏览器。
+# 四个 job 分开的原因：headless 要下载 chromium、Android 要 Gradle、iOS 要 macOS；
+# 版本/图标/类型/单测/内容校验只要几十秒，坏在代码上时没必要等后面三个。
 on:
   # 所有分支的推送都跑：这个仓库的活儿都在 feat/* 上做，只写 main 的话
   # 推上去要等有人开 PR 才有反馈。
@@ -19,7 +19,7 @@ concurrency:
 
 jobs:
   check:
-    name: 类型 / 单测 / 内容 QA
+    name: 版本 / 图标 / 类型 / 单测 / 内容 QA
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -30,6 +30,14 @@ jobs:
           cache: npm
 
       - run: npm ci
+
+      # package.json 是版本唯一事实源；漏跑 version:sync 会让商店版本号与 web 对不上
+      - name: 三端版本号一致
+        run: npm run version:check
+
+      # 图标/启动图是脚本产物，手改 PNG 会在下一次 icon:gen 被覆盖
+      - name: 图标与生成脚本一致
+        run: npm run icon:check
 
       # build = vue-tsc --noEmit + vite build，类型错与产物错一次暴露
       - name: 类型检查与生产构建
@@ -71,7 +79,7 @@ jobs:
       # verify-all 自己起 vite、跑完关掉，端口用 127.0.0.1 显式绑定。
       # PB_SHOTS_DIR 显式指回仓库内的 shots/：本地默认写系统临时目录（免得
       # 每次跑完工作区就脏），CI 只靠失败时的 artifact 取图，所以要落到这里。
-      - name: 5 个验收脚本 / 60 项断言
+      - name: 6 个验收脚本 / 67 项断言
         env:
           PB_SHOTS_DIR: shots
         run: npm run verify:all

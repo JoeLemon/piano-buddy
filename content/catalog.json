@@ -525,6 +525,42 @@
           }
         }
       ]
+    },
+    {
+      "songId": "song.highland",
+      "title": "远山",
+      "composer": "Piano Buddy",
+      "arrangements": [
+        {
+          "arrangementId": "arr.highland.full",
+          "packageId": "pkg.highland.full",
+          "name": "远山 · L6 转位与跨小节连音",
+          "level": 6,
+          "label": "L6",
+          "bpm": 50,
+          "measures": 12,
+          "skillDeps": [
+            "chord.inversion",
+            "chord.minor",
+            "chord.progression",
+            "chord.triad",
+            "clef.bass",
+            "clef.treble",
+            "hands.both",
+            "hands.together",
+            "key.one-sharp",
+            "pos.expand",
+            "pos.five",
+            "pos.leap",
+            "pos.shift",
+            "rhythm.sixteenth"
+          ],
+          "rights": {
+            "type": "original",
+            "attribution": "Piano Buddy 教学编配（原创，G 大调 4/4，右手十六分跑动与转位三和弦，左手跨小节连音）"
+          }
+        }
+      ]
     }
   ]
 }

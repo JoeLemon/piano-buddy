@@ -143,6 +143,12 @@ cd android
   「系统定位服务」诊断和「去打开」）；
 - `BLUETOOTH_SCAN` 必须带 `usesPermissionFlags="neverForLocation"`，与代码里的
   `BleClient.initialize({ androidNeverForLocation: true })` 成对出现。
+- **返回键**：抽屉开着时先收抽屉 → 练习页回上一页 → 一级分区回今日 → 在今日
+  再按一次退出 App。任何页面按返回直接退出都是回归（`src/back-button.ts`）。
+- 连不上时点设置抽屉里的「复制诊断信息」，把文本贴回反馈里——里面有版本、
+  平台、通道、设备名、定位服务状态与最近错误原文，不用再让用户描述。
+- **错误兜底**：未捕获异常应弹出一张「出了点问题」卡片（带「复制错误信息」与
+  「知道了」），而不是停在白屏。可以在调试版里手动 `reportAppError` 试一次。
 
 ---
 
@@ -192,4 +198,6 @@ CI 只在模拟器上关签名编译，验证 SPM 依赖、Info.plist 与插件�
 - [ ] Android `bundleRelease` 用正式 keystore 签名，版本号与 web 一致
 - [ ] iOS Archive 用正式证书，`NSBluetoothAlwaysUsageDescription` 在
 - [ ] 真机至少完成一次「连接 BLE 键盘 → 跟弹一段 → 关琴重连」
+- [ ] Android 返回键逐层试过：抽屉 → 上一页 → 今日 → 退出
+- [ ] 故意制造一次异常，确认错误卡片能弹出并能复制出「诊断 + 堆栈」
 - [ ] 发版说明写清楚：曲库/课程/移动端各自改了什么

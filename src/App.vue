@@ -57,6 +57,9 @@ import {
 import { loadProfile, saveProfile } from "./storage/db";
 import { loadInstalledPackages } from "./storage/packages";
 import type { InstalledPackage } from "./repertoire";
+import { installBackButton } from "./back-button";
+import { appError, clearAppError } from "./app-errors";
+import { copyText, currentDiagnostics, formatDiagnostics } from "./ui/diagnostics";
 import AppShell from "./ui/AppShell.vue";
 import HomeView from "./ui/HomeView.vue";
 import LearnView from "./ui/LearnView.vue";
@@ -98,7 +101,7 @@ const screen = ref<Screen>("loading");
  */
 const returnTo = ref<Screen>("home");
 /** 壳层实例：供「我的」页直接拉起设置抽屉，避免再复制一套设置 UI。 */
-const shellRef = ref<{ openSettings: () => void } | null>(null);
+const shellRef = ref<{ openSettings: () => void; closeSettingsIfOpen: () => boolean } | null>(null);
 const webMidiConnected = ref(false);
 const bleDevice = ref<string | null>(null);
 const midiError = ref<string | null>(null);
@@ -334,6 +337,8 @@ let testChordBuffer: number[] = [];
 const testProgress = ref(0);
 let midiWatchStop: (() => void) | null = null;
 let bleStateStop: (() => void) | null = null;
+/** Android 返回键监听的清理函数（浏览器里是空函数）。 */
+let backStop: (() => void) | null = null;
 
 watch([testScore, testStaffEl, activeTestHand], drawTestStaff, { flush: "post" });
 watch(testProgress, paintTestProgress, { flush: "post" });
@@ -430,7 +435,54 @@ onMounted(async () => {
   bleStateStop = subscribeBleState((deviceName) => {
     bleDevice.value = deviceName;
   });
+  // Android 硬件返回键：抽屉 → 上一页 → 今日 → 退出。只在原生 Android 生效。
+  backStop = await installBackButton(onAndroidBack);
 });
+
+/**
+ * 返回键的优先级。返回 true 表示这次返回被消费；false 让系统退出 App。
+ * 注意 `screen === "loading"` 时不消费——档案还没读出来就退出是合理的。
+ */
+function onAndroidBack(): boolean {
+  if (shellRef.value?.closeSettingsIfOpen()) return true;
+  if (showBack.value) {
+    onBack();
+    return true;
+  }
+  if (screen.value !== "home" && screen.value !== "placement" && screen.value !== "loading") {
+    goHome();
+    return true;
+  }
+  return false;
+}
+
+/** 错误卡片上的「复制错误信息」：诊断文本 + 堆栈，和设置抽屉里的那份同源。 */
+const errorCopied = ref<"idle" | "ok" | "fail">("idle");
+/** 复制失败时摊给用户手动复制的完整文本（诊断 + 堆栈）。 */
+const errorReport = ref("");
+
+async function copyErrorReport() {
+  if (!appError.value) return;
+  const text = [
+    formatDiagnostics(
+      currentDiagnostics({
+        runtime: nativeApp.value ? "App（原生）" : "浏览器",
+        secureContext: secureContext.value,
+        webMidiAvailable: webMidiAvailable.value,
+        webMidiConnected: webMidiConnected.value,
+        bleChannel: bleChannel.value,
+        bleDevice: bleDevice.value,
+        locationEnabled: null,
+        midiError: midiError.value,
+      }),
+    ),
+    "",
+    "错误详情:",
+    appError.value.detail,
+  ].join("\n");
+  errorReport.value = text;
+  errorCopied.value = (await copyText(text)) ? "ok" : "fail";
+}
 
 onBeforeUnmount(() => {
   stopTestAudio();
@@ -440,6 +492,8 @@ onBeforeUnmount(() => {
   midiWatchStop = null;
   bleStateStop?.();
   bleStateStop = null;
+  backStop?.();
+  backStop = null;
 });
 
 function persist(next: Profile) {
@@ -1243,6 +1297,20 @@ function lineMs(current: Score, hand: Hand | "BOTH", tempo: number): number {
 
 <template>
   <main class="app">
+    <!-- 全局错误兜底：未捕获异常时给一张能复制的卡片，而不是让页面停住 -->
+    <div v-if="appError" class="error-banner" data-test="app-error" role="alert">
+      <div class="error-copy">
+        <strong>出了点问题</strong>
+        <span>{{ appError.message }}</span>
+      </div>
+      <div class="error-actions">
+        <button type="button" class="chip" data-test="app-error-copy" @click="copyErrorReport">
+          {{ errorCopied === "ok" ? "已复制" : errorCopied === "fail" ? "复制失败" : "复制错误信息" }}
+        </button>
+        <button type="button" class="chip" data-test="app-error-dismiss" @click="clearAppError()">知道了</button>
+      </div>
+      <pre v-if="errorCopied === 'fail'" class="error-raw" data-test="app-error-raw">{{ errorReport }}</pre>
+    </div>
     <p v-if="screen === 'loading'" class="loading">正在读取档案</p>
     <AppShell
       v-else
@@ -1409,6 +1477,57 @@ function lineMs(current: Score, hand: Hand | "BOTH", tempo: number): number {
   margin: 0;
   padding: 2rem 1.25rem;
   color: var(--pb-muted);
+}
+
+/* 全局错误卡片：贴底、不遮住主操作，窄屏也放得下 */
+.error-banner {
+  position: fixed;
+  left: 50%;
+  bottom: calc(env(safe-area-inset-bottom, 0px) + var(--pb-space-3));
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  gap: var(--pb-space-2);
+  width: min(560px, calc(100vw - 2 * var(--pb-space-3)));
+  padding: var(--pb-space-3);
+  border: 1px solid var(--pb-danger);
+  border-radius: var(--pb-radius);
+  background: var(--pb-surface);
+  color: var(--pb-ink-on-surface);
+  box-shadow: 0 10px 30px rgb(15 38 32 / 35%);
+  transform: translateX(-50%);
+}
+
+.error-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  line-height: 1.45;
+}
+
+.error-copy span {
+  color: var(--pb-ink-2-on-surface);
+  font-size: 0.86rem;
+  word-break: break-word;
+}
+
+.error-actions {
+  display: flex;
+  gap: var(--pb-space-2);
+}
+
+.error-raw {
+  max-height: 30vh;
+  margin: 0;
+  padding: var(--pb-space-2);
+  overflow: auto;
+  border-radius: 8px;
+  background: var(--pb-surface-2);
+  color: var(--pb-ink-2-on-surface);
+  font-size: 0.75rem;
+  white-space: pre-wrap;
+  word-break: break-all;
+  user-select: text;
 }
 
 .warn,

@@ -1,6 +1,7 @@
 import { mount } from "@vue/test-utils";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { flushPromises } from "@vue/test-utils";
+import { nextTick } from "vue";
 import AppShell from "../src/ui/AppShell.vue";
 
 const androidLocationEnabled = vi.fn<() => Promise<boolean | null>>();
@@ -186,5 +187,61 @@ describe("AppShell 定位服务诊断（Android）", () => {
     await drawer.get("[data-test=diag-open-location]").trigger("click");
     await flushPromises();
     expect(drawer.get("[data-test=diag-location-hint]").text()).not.toContain("已带你到系统设置");
+  });
+});
+
+describe("AppShell 返回键与抽屉", () => {
+  it("抽屉开着时返回键先收抽屉，第二次交给上层", async () => {
+    const wrapper = shell();
+    await wrapper.get("[data-test=open-settings]").trigger("click");
+    const drawer = () => wrapper.get("[data-test=settings]").element as HTMLElement;
+    expect(drawer().style.display).not.toBe("none");
+
+    expect(wrapper.vm.closeSettingsIfOpen()).toBe(true);
+    await nextTick();
+    expect(drawer().style.display).toBe("none");
+    // 已经关了：返回 false，让 App 继续处理（回上一页 / 退出）
+    expect(wrapper.vm.closeSettingsIfOpen()).toBe(false);
+  });
+});
+
+describe("AppShell 诊断信息导出", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  async function openDiag(props: Record<string, unknown>) {
+    const wrapper = shell({ nativeApp: true, bleChannel: "App 原生蓝牙", midiDeviceName: "P-125", ...props });
+    await wrapper.get("[data-test=open-settings]").trigger("click");
+    const drawer = wrapper.get("[data-test=settings]");
+    const button = drawer.get("[data-test=diag-copy]");
+    expect(button.text()).toContain("复制诊断信息");
+    await button.trigger("click");
+    await flushPromises();
+    return { drawer, button };
+  }
+
+  it("剪贴板可用时把环境与通道拼成文本写进去", async () => {
+    const writeText = vi.fn(async (_text: string) => {});
+    vi.stubGlobal("navigator", { clipboard: { writeText } });
+    const { button } = await openDiag({});
+
+    expect(writeText).toHaveBeenCalledTimes(1);
+    const text = writeText.mock.calls[0][0];
+    expect(text).toContain("Piano Buddy");
+    expect(text).toContain("运行环境: App（原生）");
+    expect(text).toContain("蓝牙通道: App 原生蓝牙");
+    expect(text).toContain("蓝牙设备: P-125");
+    expect(button.text()).toContain("已复制");
+  });
+
+  it("剪贴板不可用时摊出原文，让人手动复制", async () => {
+    vi.stubGlobal("navigator", { userAgent: "test-ua" });
+    const { drawer, button } = await openDiag({});
+
+    const raw = drawer.get("[data-test=diag-raw]").text();
+    expect(raw).toContain("蓝牙通道: App 原生蓝牙");
+    expect(raw).toContain("UA: test-ua");
+    expect(button.text()).toContain("重试");
   });
 });

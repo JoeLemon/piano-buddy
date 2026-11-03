@@ -2,6 +2,7 @@
 import { onBeforeUnmount, onMounted, ref, watch } from "vue";
 import type { InstalledPackage } from "../repertoire";
 import { androidLocationEnabled, openSystemLocationSettings } from "../midi/access";
+import { copyText, currentDiagnostics, formatDiagnostics } from "./diagnostics";
 import PackageManager from "./PackageManager.vue";
 
 export type ShellSection = { id: string; label: string };
@@ -64,7 +65,17 @@ function openSettings() {
   settingsOpen.value = true;
 }
 
-defineExpose({ openSettings });
+/**
+ * Android 返回键的第一层：抽屉开着就先收抽屉。
+ * 返回是否真的关掉了——false 表示本来就没开，交给上层继续处理。
+ */
+function closeSettingsIfOpen(): boolean {
+  if (!settingsOpen.value) return false;
+  settingsOpen.value = false;
+  return true;
+}
+
+defineExpose({ openSettings, closeSettingsIfOpen });
 
 function onKeydown(event: KeyboardEvent) {
   if (event.key === "Escape" && settingsOpen.value) closeSettings();
@@ -93,6 +104,31 @@ async function jumpToLocationSettings() {
   locationJumped.value = jumped;
   // 跳过去用户不一定会改，回来这一趟再问一次比让用户自己汇报更可靠。
   await refreshLocationState();
+}
+
+/** 诊断文本：每次点按钮时现拼，避免抽屉开着时状态变化后复制到旧值。 */
+const diagnosticsText = ref("");
+const copied = ref<"idle" | "ok" | "fail">("idle");
+
+async function copyDiagnostics() {
+  diagnosticsText.value = formatDiagnostics(
+    currentDiagnostics({
+      // 与抽屉上「运行环境」那一行同源，避免复制出来的和看到的不一致
+      runtime: props.nativeApp ? "App（原生）" : "浏览器",
+      secureContext: props.secureContext === true,
+      webMidiAvailable: props.webMidiAvailable === true,
+      webMidiConnected: props.webMidiConnected === true,
+      bleChannel: props.bleChannel ?? null,
+      bleDevice: props.midiDeviceName ?? null,
+      locationEnabled: locationEnabled.value,
+      midiError: props.midiError ?? null,
+    }),
+  );
+  copied.value = (await copyText(diagnosticsText.value)) ? "ok" : "fail";
+  // 两秒后回到「复制诊断信息」，别让按钮一直显示「已复制」像卡住了
+  window.setTimeout(() => {
+    if (copied.value === "ok") copied.value = "idle";
+  }, 2000);
 }
 
 onMounted(() => {
@@ -332,6 +368,13 @@ onBeforeUnmount(() => {
                 ? "这台设备的系统版本没有可用的蓝牙接口，请改用 USB MIDI 或屏幕琴键。"
                 : "手机浏览器（尤其 iOS Safari）没有蓝牙 MIDI 接口，请在 App 版里连接蓝牙键盘，或改用屏幕琴键 / 电脑键盘。" }}
             </p>
+            <div class="diag-actions">
+              <button type="button" class="chip chip-action" data-test="diag-copy" @click="copyDiagnostics">
+                {{ copied === "ok" ? "已复制" : copied === "fail" ? "再按一次重试" : "复制诊断信息" }}
+              </button>
+              <span v-if="copied === 'fail'" class="diag-hint">这台设备不允许写剪贴板，请长按下面的文本手动复制。</span>
+            </div>
+            <pre v-if="copied === 'fail'" class="diag-raw" data-test="diag-raw">{{ diagnosticsText }}</pre>
           </details>
 
           <PackageManager @changed="emit('packages-changed', $event)" />
@@ -750,6 +793,30 @@ h1 {
   margin: var(--pb-space-2) 0 0;
   color: var(--pb-warn);
   line-height: 1.5;
+}
+
+/* 复制诊断：真机验收时把「环境 + 通道 + 报错」原样贴给开发者 */
+.diag-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--pb-space-2);
+  margin-top: var(--pb-space-2);
+}
+
+.diag-raw {
+  margin: var(--pb-space-2) 0 0;
+  padding: var(--pb-space-2);
+  border: 1px solid var(--pb-border-soft-on-surface);
+  border-radius: 8px;
+  background: var(--pb-surface-2);
+  color: var(--pb-ink-2-on-surface);
+  font-size: 0.78rem;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-all;
+  /* 长按可选中：剪贴板不可用时的兜底 */
+  user-select: text;
 }
 
 /* 窄屏：面包屑让位，节拍器数值留在顶栏，其余进抽屉 */

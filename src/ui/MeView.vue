@@ -161,18 +161,22 @@ const rows = computed(() => [
   { label: "视奏", value: sightReady.value ? "已解锁" : "未解锁" },
 ]);
 
-const practiceRows = computed(() => {
+const practiceRows = computed(() => [
+  { label: "今日停留", value: `${practice.value.todayCount} 条 · ${formatMinutes(practice.value.todayMs)}` },
+  { label: "连续练习", value: `${practice.value.streak} 天` },
+  { label: "累计停留", value: `${practice.value.totalCount} 条 · ${formatMinutes(practice.value.totalMs)}` },
+]);
+
+/**
+ * 答题数与停留时长是两套口径：一条练习记录可能包含很多题，也可能只是
+ * 看了一会儿没答题。放在同一个卡片里并列会被读成「同一套练习量」，
+ * 所以单独成块并写清「按题计」。
+ */
+const quizText = computed(() => {
   const stats = practiceStatsTotals(props.profile.practiceStats);
-  const quiz =
-    stats.answered === 0
-      ? "还没答过"
-      : `共 ${stats.answered} 题 · 正确率 ${Math.round((stats.correct / stats.answered) * 100)}%`;
-  return [
-    { label: "今日停留", value: `${practice.value.todayCount} 条 · ${formatMinutes(practice.value.todayMs)}` },
-    { label: "连续练习", value: `${practice.value.streak} 天` },
-    { label: "累计停留", value: `${practice.value.totalCount} 条 · ${formatMinutes(practice.value.totalMs)}` },
-    { label: "乐理答题数", value: quiz },
-  ];
+  return stats.answered === 0
+    ? "还没答过"
+    : `共 ${stats.answered} 题 · 正确率 ${Math.round((stats.correct / stats.answered) * 100)}%`;
 });
 
 const metricsRows = computed(() => {
@@ -210,6 +214,15 @@ const metricsRows = computed(() => {
           <dd>{{ row.value }}</dd>
         </div>
       </dl>
+      <div class="quiz-block" data-test="me-practice-quiz">
+        <h3>乐理答题（按题计）</h3>
+        <dl class="stats">
+          <div class="stat">
+            <dt>答题与正确率</dt>
+            <dd>{{ quizText }}</dd>
+          </div>
+        </dl>
+      </div>
       <p class="muted" data-test="me-practice-note">
         练习记录按页面停留时长累计；乐理答题按答题数统计，两者不是同一口径。
       </p>
@@ -358,6 +371,19 @@ const metricsRows = computed(() => {
 .section h2 {
   margin: 0;
   font-size: 1rem;
+}
+
+.quiz-block {
+  display: flex;
+  flex-direction: column;
+  gap: var(--pb-space-2);
+}
+
+.quiz-block h3 {
+  margin: 0;
+  color: var(--pb-muted);
+  font-size: 0.85rem;
+  font-weight: 600;
 }
 
 .stats {

@@ -45,8 +45,11 @@ const props = withDefaults(
 );
 
 const emit = defineEmits<{
-  /** 跟完一遍。父级可以据此切到下一段。 */
-  done: [payload: { onCount: number; total: number }];
+  /**
+   * 跟完一遍。父级可以据此切到下一段，并用 `weakBar` / `missed` 算下一步；
+   * 跟弹自身不读技能账本，只负责把「错最多的小节」报上去。
+   */
+  done: [payload: { onCount: number; total: number; missed: number; weakBar: number | null }];
 }>();
 
 /** 最后一个音之后再等两拍；再没动静就收尾。 */
@@ -129,6 +132,33 @@ const detail = computed(() => {
     });
 });
 
+/**
+ * 错得最多的小节。
+ *
+ * 收尾卡片不能只给一个百分数：用户需要知道「下一次先练哪儿」。按槽位统计
+ * 没弹齐的音（和弦漏一个也算这个位置没对），落到小节上取最多的一节；平手
+ * 时取更早的小节，方便接下来从头顺。父级拿这个行号去算缺哪项技能。
+ */
+const weakBar = computed(() => {
+  const value = result.value;
+  if (!value) return null;
+  const byBar = new Map<number, number>();
+  for (const step of value.steps) {
+    if (step.pitchMatched) continue;
+    const slot = plan.value.slots[step.slotIndex];
+    if (!slot) continue;
+    const { bar } = barOfBeat(plan.value, slot.startBeat);
+    byBar.set(bar, (byBar.get(bar) ?? 0) + 1);
+  }
+  let best: { bar: number; missed: number } | null = null;
+  for (const [bar, missed] of byBar) {
+    if (!best || missed > best.missed || (missed === best.missed && bar < best.bar)) {
+      best = { bar, missed };
+    }
+  }
+  return best;
+});
+
 /** rAF 在无头/测试环境里不一定存在，退到定时器，保证时钟照走。 */
 function raf(callback: () => void): number {
   return typeof requestAnimationFrame === "function"
@@ -204,7 +234,15 @@ function stopClock() {
 function finish() {
   stopClock();
   const value = result.value;
-  if (value) emit("done", { onCount: value.onCount, total: value.total });
+  if (value) {
+    const weak = weakBar.value;
+    emit("done", {
+      onCount: value.onCount,
+      total: value.total,
+      missed: value.steps.filter((step) => !step.pitchMatched).length,
+      weakBar: weak?.bar ?? null,
+    });
+  }
 }
 
 /** 同一个事件可能既从订阅来、又从 pulse 来；按引用只处理一次。 */

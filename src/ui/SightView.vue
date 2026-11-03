@@ -29,7 +29,7 @@ import {
   scrollScoreToNote,
   scoreProgressRatio,
 } from "../notation/scorePaint";
-import { renderGrandScore, renderScore } from "../notation/renderScore";
+import { loadRenderer } from "../notation/loadRenderer";
 import ScoreProgress from "./ScoreProgress.vue";
 
 const PREPARE_SECONDS = 25;
@@ -481,7 +481,7 @@ function chooseHand(next: Hand) {
   syncPrepare();
 }
 
-function drawStaff() {
+async function drawStaff() {
   const el = staffEl.value;
   if (!el) return;
   const current = score.value;
@@ -489,6 +489,8 @@ function drawStaff() {
     el.replaceChildren();
     return;
   }
+  const { renderGrandScore, renderScore } = await loadRenderer();
+  if (staffEl.value !== el || score.value !== current) return;
   if (current.hands.length === 2) renderGrandScore(el, current, showFingers.value);
   else renderScore(el, current, hand.value, showFingers.value);
   paintProgress();

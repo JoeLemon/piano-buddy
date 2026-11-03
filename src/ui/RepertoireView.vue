@@ -9,7 +9,7 @@ import { scoreSegments, segmentBeatRange, sliceScore } from "../domain/sliceScor
 import { flattenScore } from "../domain/timeline";
 import type { Hand, Score } from "../domain/types";
 import { flatRows, paintGrandProgress, paintScoreProgress } from "../notation/scorePaint";
-import { renderGrandScore, renderScore } from "../notation/renderScore";
+import { loadRenderer } from "../notation/loadRenderer";
 import { L3_PREP_LESSONS } from "../practice";
 import {
   SKILL_BY_ID,
@@ -31,6 +31,7 @@ import {
   scoreFromPackage,
   type Catalog,
   type CatalogArrangement,
+  type CatalogSong,
   type DifficultyVector,
   type InstalledPackage,
   type RepertoireAssessment,
@@ -173,6 +174,97 @@ const NO_KEYS: ReadonlySet<string> = new Set();
 
 const ledger = computed(() => migrateProfile(props.profile));
 const mastered = computed(() => masteredSkillIds(ledger.value));
+
+/**
+ * 曲库按「能不能弹」分三段，不再按评级从低到高平铺。
+ *
+ * 技能账本已经算得出每首曲子缺什么，但列表过去仍按 engine 评级排序：L4 用户
+ * 第一屏看到的全是 L6。现在先把他现在能弹的放到最前，其次缺 1–3 项的，
+ * 最后才是「还早」。缺技能的顺序沿用补短板规则，并在列表层直接给微课入口，
+ * 不用先点进详情才发现要去哪补。
+ */
+const SOON_SKILL_LIMIT = 3;
+const SONG_ROUTE_LIMIT = 2;
+
+type SongReadiness = "ready" | "soon" | "later";
+
+interface SongListItem {
+  song: CatalogSong;
+  /** 最容易弹下来的那一档：同歌多编配时用它判断「这首在不在射程内」。 */
+  target: CatalogArrangement;
+  missing: string[];
+  readiness: SongReadiness;
+}
+
+function songItem(song: CatalogSong): SongListItem {
+  const candidates = song.arrangements.map((arrangement) => ({
+    arrangement,
+    missing: missingSkillOrder(
+      missingSkills(arrangement.skillDeps, mastered.value),
+      ledger.value,
+    ),
+  }));
+  candidates.sort(
+    (a, b) =>
+      a.missing.length - b.missing.length ||
+      a.arrangement.level - b.arrangement.level ||
+      a.arrangement.arrangementId.localeCompare(b.arrangement.arrangementId),
+  );
+  const best = candidates[0];
+  // filteredSongs 只保留有编配的歌，这里一定有候选；兜底成「还早」不虚报。
+  if (!best) {
+    throw new Error(`曲目 ${song.songId} 没有可用编配`);
+  }
+  const readiness: SongReadiness =
+    best.missing.length === 0
+      ? "ready"
+      : best.missing.length <= SOON_SKILL_LIMIT
+        ? "soon"
+        : "later";
+  return { song, target: best.arrangement, missing: best.missing, readiness };
+}
+
+const songSections = computed(() => {
+  const items = filteredSongs.value.map(songItem);
+  const rank: Record<SongReadiness, number> = { ready: 0, soon: 1, later: 2 };
+  items.sort(
+    (a, b) =>
+      rank[a.readiness] - rank[b.readiness] ||
+      // 「再练几个」里缺口少的排前：离能弹最近。
+      (a.readiness === "soon" ? a.missing.length - b.missing.length : 0) ||
+      a.target.level - b.target.level ||
+      a.song.title.localeCompare(b.song.title, "zh-CN"),
+  );
+  const sections: Array<{
+    id: SongReadiness;
+    title: string;
+    caption: string;
+    items: SongListItem[];
+  }> = [
+    { id: "ready", title: "现在能弹", caption: "所需技能都过了，挑一首开始。", items: [] },
+    {
+      id: "soon",
+      title: "再练几个就够",
+      caption: `缺 1–${SOON_SKILL_LIMIT} 项技能，补完就能弹。`,
+      items: [],
+    },
+    { id: "later", title: "还早", caption: "先把主线往前推，这些曲目会自己走近。", items: [] },
+  ];
+  for (const item of items) sections[rank[item.readiness]].items.push(item);
+  return sections.filter((section) => section.items.length > 0);
+});
+
+/** 列表层的缺口入口：最多两项，按补短板顺序取第一项能落到课上的。 */
+function songRoutes(item: SongListItem): Array<{ id: string; name: string; route: SkillRoute }> {
+  const out: Array<{ id: string; name: string; route: SkillRoute }> = [];
+  for (const id of item.missing) {
+    const route = routeForSkill(id);
+    if (!route) continue;
+    out.push({ id, name: skillInfo(id).name, route });
+    if (out.length >= SONG_ROUTE_LIMIT) break;
+  }
+  return out;
+}
 const requiredSkills = computed(() => {
   const ids = selected.value?.arrangement.skillDeps ?? [];
   return ids
@@ -328,6 +420,7 @@ function clearAssessment() {
   assessmentIndex.value = 0;
   assessmentAttempt.value = 0;
   assessmentResults.value = [];
+  setFollowNext(null);
 }
 
 function startAssessment() {
@@ -376,6 +469,28 @@ function retryAssessmentSegment() {
 const following = ref(false);
 /** A–B 循环：示范播放只在当前分段里反复，听完一遍自动重播。 */
 const loop = ref(false);
+/** 「再跟一遍」靠换 key 重建 ScoreFollow，把上一轮的判定彻底清掉。 */
+const followAttempt = ref(0);
+/**
+ * 跟弹收尾的下一步。跟弹本身只报「哪一小节错得最多」，缺哪项技能、
+ * 去哪补由曲库页结合技能账本算——和缺技能清单用的是同一套路由。
+ */
+const followNext = ref<{ title: string; detail?: string; cta: string } | null>(null);
+let followNextAction: (() => void) | null = null;
+
+function setFollowNext(
+  next: { title: string; detail?: string; cta: string } | null,
+  action: (() => void) | null = null,
+) {
+  followNext.value = next;
+  followNextAction = action;
+}
+
+function runFollowNext() {
+  const action = followNextAction;
+  setFollowNext(null);
+  action?.();
+}
 const followScore = computed(() => {
   if (assessing.value) return assessmentScore.value;
   const score = selectedScore.value;
@@ -389,7 +504,7 @@ const followBpm = computed(() => Math.round((selectedScore.value?.bpm ?? 60) * s
 const followKey = computed(() =>
   assessing.value
     ? `${selectedId.value}-assess-${assessmentIndex.value}-${assessmentAttempt.value}-${hand.value}`
-    : `${selectedId.value}-${selectedSegment.value}-${hand.value}`,
+    : `${selectedId.value}-${selectedSegment.value}-${hand.value}-${followAttempt.value}`,
 );
 
 /**
@@ -405,6 +520,7 @@ const pickupHint = computed(() => {
 function toggleFollow() {
   // 示范播放与跟弹不共用一条时间线；换谱子后由 staffScore 的 watch 重建播放器。
   stopPlayback();
+  setFollowNext(null);
   if (assessing.value) {
     clearAssessment();
     following.value = false;
@@ -529,6 +645,7 @@ watch(staffScore, () => {
 // 换掉 staffScore，那条 watch 会一并重设循环。
 watch([selectedSegment, hand], () => {
   applyLoop();
+  setFollowNext(null);
 });
 
 watch([staffScore, staffEl, showFingers], async () => {
@@ -584,12 +701,14 @@ function skillInfo(id: string): Skill {
   return SKILL_BY_ID.get(id) ?? { id, name: id, level: 0, prereq: [] };
 }
 
-function drawStaff() {
+async function drawStaff() {
   const element = staffEl.value;
   const score = staffScore.value;
   if (!element || !score) return;
   renderError.value = "";
   try {
+    const { renderGrandScore, renderScore } = await loadRenderer();
+    if (staffEl.value !== element || staffScore.value !== score) return;
     if (score.hands.includes("RH") && score.hands.includes("LH")) {
       renderGrandScore(element, score, showFingers.value);
     } else {
@@ -645,6 +764,7 @@ function selectArrangement(arrangement: CatalogArrangement) {
   const wasAssessing = assessing.value;
   stopPlayback();
   clearAssessment();
+  setFollowNext(null);
   if (wasAssessing) following.value = false;
   selectedId.value = arrangement.arrangementId;
   selectedSegment.value = 0;
@@ -731,9 +851,16 @@ function persistAssessment(results: RepertoireSegmentResult[]) {
   emit("completed");
 }
 
-function onFollowDone(payload: { onCount: number; total: number }) {
+function onFollowDone(payload: {
+  onCount: number;
+  total: number;
+  missed?: number;
+  weakBar?: number | null;
+}) {
   const score = followScore.value;
   if (!score || payload.total === 0) return;
+  const missed = payload.missed ?? Math.max(0, payload.total - payload.onCount);
+  const weakBar = payload.weakBar ?? null;
 
   if (assessing.value) {
     const segment = assessmentSegment.value;
@@ -753,6 +880,7 @@ function onFollowDone(payload: { onCount: number; total: number }) {
     ].sort((a, b) => a.index - b.index);
     assessmentResults.value = next;
     if (next.length === segments.value.length) persistAssessment(next);
+    assessmentNextStep(missed);
     return;
   }
 
@@ -770,11 +898,112 @@ function onFollowDone(payload: { onCount: number; total: number }) {
       total: payload.total,
     });
   }
-  if (payload.onCount < payload.total) {
-    if (next !== props.profile) emit("update-profile", next);
+  const clean = payload.onCount >= payload.total;
+  if (clean) next = bankPractice(next, score, followBpm.value);
+  if (next !== props.profile) emit("update-profile", next);
+  followNextStep(missed, weakBar);
+}
+
+/**
+ * 单段跟弹收尾：错得多就说哪一小节、缺哪项技能、去哪补；全对就推着往下走。
+ *
+ * 曲库页已经有一整套「缺口 → 微课」的路由，这里复用同一份，不再另造一套
+ * 建议逻辑；没有可直达的微课时退回「再跟一遍」，不硬塞一个到不了的入口。
+ */
+function followNextStep(missed: number, weakBar: number | null) {
+  if (missed > 0 && weakBar !== null) {
+    const source = selectedScore.value;
+    const segment = activeSegment.value;
+    if (source && segment) {
+      // weakBar 是切片内的小节号（1 起），换算回整首谱的小节再取这一小节。
+      const sourceBar = segment.start + weakBar;
+      const barIndex = Math.min(Math.max(sourceBar - 1, segment.start), segment.end - 1);
+      const barScore = sliceScore(source, barIndex, barIndex + 1, hand.value);
+      const barMissing = missingSkillOrder(
+        missingSkills(requiredSkillsForScore(barScore), mastered.value),
+        ledger.value,
+      );
+      const target = barMissing
+        .map((id) => ({ id, route: routeForSkill(id) }))
+        .find((item) => item.route);
+      if (target?.route) {
+        const route = target.route;
+        setFollowNext(
+          {
+            title: `第 ${sourceBar} 小节错得最多`,
+            detail: `这一段有 ${missed} 个位置没弹齐；先把「${skillInfo(target.id).name}」补上。`,
+            cta: route.label,
+          },
+          () => openSkillRoute(route),
+        );
+        return;
+      }
+    }
+    setFollowNext(
+      {
+        title: weakBar !== null ? `第 ${(activeSegment.value?.start ?? 0) + weakBar} 小节错得最多` : "这一段还没弹齐",
+        detail: `这一段有 ${missed} 个位置没弹齐，放慢速度再顺一遍。`,
+        cta: "再跟一遍",
+      },
+      restartFollow,
+    );
     return;
   }
-  emit("update-profile", bankPractice(next, score, followBpm.value));
+
+  const nextSegment = selectedSegment.value + 1;
+  if (nextSegment < segments.value.length) {
+    setFollowNext(
+      {
+        title: "这一段跟完了",
+        detail: "保持这个速度，接着练下一段。",
+        cta: "下一段",
+      },
+      () => {
+        selectedSegment.value = nextSegment;
+      },
+    );
+    return;
+  }
+  setFollowNext(
+    {
+      title: "这一段跟完了",
+      detail: "整首的段落都能跟下来了，试一次整曲评测。",
+      cta: "整曲评测",
+    },
+    startAssessment,
+  );
+}
+
+/** 整曲评测里跟完一段：直接给「下一段」，收齐后指向整曲结果。 */
+function assessmentNextStep(missed: number) {
+  const nextIndex = assessmentIndex.value + 1;
+  if (nextIndex < segments.value.length) {
+    setFollowNext(
+      {
+        title: missed > 0 ? `这一段有 ${missed} 个位置没弹齐` : "这一段跟完了",
+        detail: "先记下这段成绩，接着测下一段。",
+        cta: "下一段",
+      },
+      nextAssessment,
+    );
+    return;
+  }
+  if (assessmentComplete.value) {
+    setFollowNext(
+      {
+        title: "整曲评测完成",
+        detail: assessmentSummary.value,
+        cta: "从头再测",
+      },
+      startAssessment,
+    );
+    return;
+  }
+  setFollowNext(null);
+}
+
+function restartFollow() {
+  followAttempt.value += 1;
 }
 
 function openSkillRoute(route: SkillRoute) {
@@ -877,6 +1106,7 @@ function setSpeed(value: number) {
 
 function setHand(value: Hand | "BOTH") {
   if (assessing.value) clearAssessment();
+  setFollowNext(null);
   hand.value = value;
   const next = ensurePlayer();
   if (!next) return;
@@ -945,32 +1175,78 @@ function setHand(value: Hand | "BOTH") {
       </button>
     </p>
 
-    <section v-for="song in filteredSongs" :key="song.songId" class="song" :data-song="song.songId">
-      <div class="song-head">
-        <div>
-          <h2>{{ song.title }}</h2>
-          <p v-if="song.composer" class="muted">{{ song.composer }}</p>
-        </div>
+    <section
+      v-for="section in songSections"
+      :key="section.id"
+      class="song-group"
+      data-test="repertoire-group"
+      :data-readiness="section.id"
+    >
+      <div class="group-head">
+        <h2>{{ section.title }}</h2>
+        <span>{{ section.caption }}</span>
       </div>
 
-      <div class="arrangements">
-        <button
-          v-for="arrangement in song.arrangements"
-          :key="arrangement.arrangementId"
-          type="button"
-          class="arrangement"
-          :class="{ active: arrangement.arrangementId === selectedId }"
-          :aria-pressed="arrangement.arrangementId === selectedId"
-          data-test="arrangement"
-          :data-arrangement="arrangement.arrangementId"
-          :data-level="arrangement.level"
-          @click="selectArrangement(arrangement)"
+      <section
+        v-for="item in section.items"
+        :key="item.song.songId"
+        class="song"
+        :data-song="item.song.songId"
+        :data-readiness="item.readiness"
+      >
+        <div class="song-head">
+          <div>
+            <h2>{{ item.song.title }}</h2>
+            <p v-if="item.song.composer" class="muted">{{ item.song.composer }}</p>
+          </div>
+          <p class="song-state" data-test="repertoire-song-state">
+            {{
+              item.missing.length === 0
+                ? `已具备 ${item.target.label} 编配所需技能`
+                : `再练 ${item.missing.length} 个技能 · 最低门槛 ${item.target.label}`
+            }}
+          </p>
+        </div>
+
+        <div class="arrangements">
+          <button
+            v-for="arrangement in item.song.arrangements"
+            :key="arrangement.arrangementId"
+            type="button"
+            class="arrangement"
+            :class="{ active: arrangement.arrangementId === selectedId }"
+            :aria-pressed="arrangement.arrangementId === selectedId"
+            data-test="arrangement"
+            :data-arrangement="arrangement.arrangementId"
+            :data-level="arrangement.level"
+            @click="selectArrangement(arrangement)"
+          >
+            <strong>{{ arrangement.label }}</strong>
+            <span>{{ arrangement.name }}</span>
+            <small>{{ arrangement.bpm }} BPM · {{ arrangement.measures }} 小节</small>
+          </button>
+        </div>
+
+        <!-- 缺技能直达微课放在列表层：先看到「差什么、去哪补」，再决定点不点进详情 -->
+        <div
+          v-if="songRoutes(item).length > 0"
+          class="song-routes"
+          data-test="repertoire-song-routes"
         >
-          <strong>{{ arrangement.label }}</strong>
-          <span>{{ arrangement.name }}</span>
-          <small>{{ arrangement.bpm }} BPM · {{ arrangement.measures }} 小节</small>
-        </button>
-      </div>
+          <span class="song-routes-label">差：</span>
+          <span v-for="entry in songRoutes(item)" :key="entry.id" class="song-route">
+            {{ entry.name }}
+            <button
+              type="button"
+              class="skill-route"
+              :data-test="`song-route-${entry.id}`"
+              @click="openSkillRoute(entry.route)"
+            >
+              {{ entry.route.label }}
+            </button>
+          </span>
+        </div>
+      </section>
     </section>
 
     <section v-if="selected" class="detail" data-test="repertoire-detail">
@@ -1166,6 +1442,24 @@ function setHand(value: Hand | "BOTH") {
         @done="onFollowDone"
       />
 
+      <!-- 收尾的下一步：分数只说明「这遍怎样」，这里说明「接下来去哪」 -->
+      <div
+        v-if="(following || assessing) && followScore && followNext"
+        class="follow-next"
+        data-test="repertoire-next"
+      >
+        <p class="follow-next-title">{{ followNext.title }}</p>
+        <p v-if="followNext.detail" class="follow-next-detail">{{ followNext.detail }}</p>
+        <button
+          type="button"
+          class="follow-next-action"
+          data-test="repertoire-next-action"
+          @click="runFollowNext"
+        >
+          {{ followNext.cta }}
+        </button>
+      </div>
+
       <div class="info-grid">
         <section class="info" data-test="repertoire-skills">
           <h3>需要的技能</h3>
@@ -1342,11 +1636,97 @@ h3 {
   cursor: pointer;
 }
 
+.song-group {
+  margin: 0 0 1.4rem;
+}
+
+.group-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.5rem;
+  margin: 0 0 0.6rem;
+}
+
+.group-head h2 {
+  margin: 0;
+  font-size: 1.05rem;
+}
+
+.group-head span {
+  color: var(--pb-muted);
+  font-size: 0.8rem;
+}
+
 .song {
   margin: 0 0 1rem;
   padding: 0.9rem 1rem;
   border: 1px solid var(--pb-border-soft);
   border-radius: var(--pb-radius);
+}
+
+.song-state {
+  margin: 0;
+  color: var(--pb-muted);
+  font-size: 0.8rem;
+  text-align: right;
+}
+
+.song-routes {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.45rem;
+  margin-top: 0.6rem;
+  color: var(--pb-muted);
+  font-size: 0.8rem;
+}
+
+.song-route {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.3rem;
+}
+
+.song-routes-label {
+  color: var(--pb-warn);
+}
+
+.follow-next {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.45rem 0.7rem;
+  margin: 0.55rem 0;
+  padding: 0.65rem 0.8rem;
+  border: 1px solid var(--pb-border-soft);
+  border-left: 3px solid var(--pb-accent);
+  border-radius: var(--pb-radius);
+  background: var(--pb-surface-2);
+  font-size: 0.85rem;
+}
+
+.follow-next-title {
+  margin: 0;
+  font-weight: 600;
+  color: var(--pb-ink);
+}
+
+.follow-next-detail {
+  margin: 0;
+  color: var(--pb-muted);
+}
+
+.follow-next-action {
+  padding: 0.35rem 0.7rem;
+  border: 1px solid var(--pb-accent-2);
+  border-radius: var(--pb-radius);
+  background: var(--pb-accent-2);
+  color: var(--pb-accent-text);
+  font-size: 0.82rem;
+  font-weight: 600;
+  cursor: pointer;
 }
 
 .song-head,

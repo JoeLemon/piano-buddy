@@ -5,9 +5,12 @@ import { saveProfile } from "../src/storage/db";
 import App from "../src/App.vue";
 
 async function untilSelector(wrapper: { find: (selector: string) => { exists: () => boolean } }, selector: string) {
-  for (let attempt = 0; attempt < 20; attempt += 1) {
+  for (let attempt = 0; attempt < 200; attempt += 1) {
     await flushPromises();
     if (wrapper.find(selector).exists()) return;
+    // 曲库是异步组件，第一次进入要真的把分包取回来，
+    // 只 flush 微任务会在加载完成前就把重试次数用光。
+    await new Promise((resolve) => setTimeout(resolve, 10));
   }
   throw new Error(`missing ${selector}`);
 }

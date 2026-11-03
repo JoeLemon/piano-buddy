@@ -2,7 +2,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { audioAvailable, previewScore, type Playback } from "../audio/preview";
 import type { NotePulse } from "../midi/types";
-import { renderScore } from "../notation/renderScore";
+import { loadRenderer } from "../notation/loadRenderer";
 import { melodyToScore } from "../practice/melodyPlayback";
 import type { PlaybackQuestion } from "../practice/melodyTypes";
 import {
@@ -112,10 +112,13 @@ watch(
   { flush: "post" },
 );
 
-function drawStaff() {
+async function drawStaff() {
   const element = staffEl.value;
-  if (!element || !props.staff || !props.showStaff || !score.value) return;
-  renderScore(element, score.value, "RH", false);
+  const current = score.value;
+  if (!element || !props.staff || !props.showStaff || !current) return;
+  const { renderScore } = await loadRenderer();
+  if (staffEl.value !== element || score.value !== current) return;
+  renderScore(element, current, "RH", false);
 }
 
 function play() {

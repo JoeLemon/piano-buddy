@@ -7,7 +7,7 @@ import {
   markMapFromIds,
   markStaffNotes,
 } from "../notation/markStaff";
-import { renderGrandScore, renderScore } from "../notation/renderScore";
+import { loadRenderer } from "../notation/loadRenderer";
 
 const props = defineProps<{
   feedback: string;
@@ -54,9 +54,11 @@ watch(
 );
 onMounted(draw);
 
-function draw() {
+async function draw() {
   const el = staffEl.value;
   if (!el) return;
+  const { renderGrandScore, renderScore } = await loadRenderer();
+  if (staffEl.value !== el) return;
   if (grand.value) {
     renderGrandScore(el, props.score, true);
     markGrandStaffNotes(

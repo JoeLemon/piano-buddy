@@ -17,7 +17,7 @@ import {
   scrollScoreToCursor,
   scoreProgressRatio,
 } from "../notation/scorePaint";
-import { renderScore } from "../notation/renderScore";
+import { loadRenderer } from "../notation/loadRenderer";
 import KeyboardDiagram from "./KeyboardDiagram.vue";
 import ScoreProgress from "./ScoreProgress.vue";
 
@@ -197,7 +197,7 @@ function sameProgress(current: Profile, next: Profile): boolean {
     && current.lastSeed === next.lastSeed;
 }
 
-function drawStaff() {
+async function drawStaff() {
   const el = staffEl.value;
   const current = score.value;
   const lessonId = profileState.value.lessonId;
@@ -206,6 +206,8 @@ function drawStaff() {
     el.replaceChildren();
     return;
   }
+  const { renderScore } = await loadRenderer();
+  if (staffEl.value !== el || score.value !== current) return;
   renderScore(el, current, hand.value, true);
   applyPaint();
 }

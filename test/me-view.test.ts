@@ -83,6 +83,24 @@ describe("MeView 最近练习", () => {
     expect(wrapper.find("[data-test=me-settings]").exists()).toBe(true);
   });
 
+  it("keeps answering counts out of the time-based rows", () => {
+    vi.spyOn(Date, "now").mockReturnValue(NOON);
+    const wrapper = mount(MeView, {
+      props: {
+        profile: profile({
+          practiceLog: [{ at: NOON, kind: "theory", ms: 10 * MINUTE }],
+          practiceStats: { theory: { answered: 10, correct: 8 } },
+        }),
+      },
+    });
+
+    // 停留时长与答题数是两套口径：答题单独成块，不和「今日停留」并排。
+    const practice = wrapper.get("[data-test=me-practice]");
+    expect(practice.find("[data-test=me-practice-quiz]").text()).toContain("10 题");
+    expect(practice.find("[data-test=me-practice-quiz]").text()).toContain("80%");
+    expect(practice.text()).toContain("不是同一口径");
+  });
+
   it("shows local metrics and the gap hit rate", () => {
     vi.spyOn(Date, "now").mockReturnValue(NOON);
     const wrapper = mount(MeView, {

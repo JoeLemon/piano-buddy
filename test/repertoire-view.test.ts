@@ -541,6 +541,84 @@ describe("RepertoireView", () => {
       vi.useRealTimers();
     }
   });
+
+  it("puts playable songs first and keeps advanced ones out of the first screen", () => {
+    const wrapper = mount(RepertoireView, {
+      props: {
+        profile: profile({ l1RightPassed: true, l1LeftPassed: true, l2Passed: true }),
+      },
+    });
+
+    const groups = wrapper.findAll("[data-test=repertoire-group]");
+    expect(groups.length).toBeGreaterThan(1);
+    // 三段按「现在能弹 → 再练几个 → 还早」单调排列。
+    const order = groups.map((group) =>
+      ["ready", "soon", "later"].indexOf(group.attributes("data-readiness") ?? ""),
+    );
+    expect(order).toEqual([...order].sort((a, b) => a - b));
+    expect(groups[0]?.attributes("data-readiness")).toBe("ready");
+    expect(groups[0]?.text()).toContain("欢乐颂");
+    expect(groups[0]?.text()).not.toContain("风铃");
+
+    // 同歌升级：L2 编配已具备，列表直接说清楚，不用先点进详情。
+    const state = wrapper.get('[data-song="song.ode-to-joy"] [data-test=repertoire-song-state]');
+    expect(state.text()).toContain("已具备");
+    wrapper.unmount();
+  });
+
+  it("shows the missing-skill route on the list, not only in the detail", async () => {
+    const wrapper = mount(RepertoireView, { props: { profile: profile() } });
+
+    const route = wrapper.get('[data-test="song-route-clef.treble"]');
+    expect(route.text()).toContain("去 L1");
+    await route.trigger("click");
+    expect(wrapper.emitted("open-lesson")).toEqual([["L1-2"]]);
+    wrapper.unmount();
+  });
+
+  it("turns the follow verdict into a concrete next step", async () => {
+    const wrapper = mount(RepertoireView, { props: { profile: profile() } });
+
+    await wrapper.get('[data-arrangement="arr.ode-to-joy.standard"]').trigger("click");
+    await wrapper.findAll("[data-test=repertoire-hand]").at(1)?.trigger("click");
+    await wrapper.get("[data-test=repertoire-follow]").trigger("click");
+
+    const follow = wrapper.getComponent(ScoreFollow);
+    follow.vm.$emit("done", { onCount: 3, total: 4, missed: 1, weakBar: 1 });
+    await nextTick();
+
+    const next = wrapper.get("[data-test=repertoire-next]");
+    expect(next.text()).toContain("第 1 小节错得最多");
+    expect(next.text()).toContain("个位置没弹齐");
+    const action = next.get("[data-test=repertoire-next-action]");
+    expect(action.text()).toContain("去 L1");
+    await action.trigger("click");
+    expect(wrapper.emitted("open-lesson")?.length).toBeGreaterThan(0);
+    wrapper.unmount();
+  });
+
+  it("sends a clean take on to the next segment", async () => {
+    const wrapper = mount(RepertoireView, { props: { profile: profile() } });
+
+    await wrapper.get('[data-arrangement="arr.ode-to-joy.standard"]').trigger("click");
+    await wrapper.get("[data-test=repertoire-follow]").trigger("click");
+
+    wrapper.getComponent(ScoreFollow).vm.$emit("done", {
+      onCount: 4,
+      total: 4,
+      missed: 0,
+      weakBar: null,
+    });
+    await nextTick();
+
+    expect(wrapper.get("[data-test=repertoire-next]").text()).toContain("下一段");
+    await wrapper.get("[data-test=repertoire-next-action]").trigger("click");
+    await nextTick();
+    expect(
+      (wrapper.get("[data-test=repertoire-segment]").element as HTMLSelectElement).value,
+    ).toBe("1");
+    wrapper.unmount();
+  });
 });
 
 /** 把内置 L2 谱面包装成一个外部安装包；只换身份字段，谱面照用。 */

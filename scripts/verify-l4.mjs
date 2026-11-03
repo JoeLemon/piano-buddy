@@ -71,6 +71,8 @@ await page.waitForSelector('[data-test=practice-stage-head]', { timeout: 8000 })
 const head1 = await page.locator('[data-test=practice-stage-head]').textContent();
 check('L4-1 关卡标题', (head1 ?? '').includes('分解和弦'), head1 ?? '');
 check('L4-1 进度 5 题', (await page.locator('[data-test=practice-progress]').textContent()) === '第 1 / 5 题');
+// 渲染器（VexFlow）是按需加载的：第一次画谱要等分包到位，不能拿同步渲染的旧假设断言
+await page.waitForSelector('[data-test=practice-staff] svg', { timeout: 8000 }).catch(() => {});
 check('L4-1 谱面渲染', (await page.locator('[data-test=practice-staff] svg').count()) >= 1);
 check('L4-1 分解入口', (await page.locator('[data-test=practice-play]').count()) === 1);
 check('L4-1 柱式入口', (await page.locator('[data-test=practice-block]').count()) === 1);
@@ -91,6 +93,7 @@ await page.waitForSelector('[data-test=practice-stage-head]', { timeout: 8000 })
 const head2 = await page.locator('[data-test=practice-stage-head]').textContent();
 check('L4-2 关卡标题', (head2 ?? '').includes('手位读谱'), head2 ?? '');
 check('L4-2 进度 5 题', (await page.locator('[data-test=practice-progress]').textContent()) === '第 1 / 5 题');
+await page.waitForSelector('[data-test=practice-staff] svg', { timeout: 8000 }).catch(() => {});
 check('L4-2 谱面渲染', (await page.locator('[data-test=practice-staff] svg').count()) >= 1);
 const choices = await page.locator('[data-test=practice-choice]').count();
 check('L4-2 四个选项', choices === 4, `实际 ${choices}`);

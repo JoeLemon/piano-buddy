@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { computed, defineAsyncComponent, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { startMetronome } from "./audio/preview";
 import { compare, type CompareResult, type PlayedNote } from "./domain/compare";
 import { feedbackText, sightFeedbackText } from "./domain/feedback";
@@ -45,7 +45,7 @@ import {
   type MidiNote,
 } from "./midi/access";
 import { isNativeApp } from "./platform";
-import { renderGrandScore, renderScore } from "./notation/renderScore";
+import { loadRenderer } from "./notation/loadRenderer";
 import {
   grandProgressRatio,
   paintGrandProgress,
@@ -70,10 +70,15 @@ import L3ReadingView from "./ui/L3ReadingView.vue";
 import L3PrepView from "./ui/L3PrepView.vue";
 import PracticeView from "./ui/PracticeView.vue";
 import ReadingView from "./ui/ReadingView.vue";
-import RepertoireView from "./ui/RepertoireView.vue";
 import ReviewView from "./ui/ReviewView.vue";
 import SightView from "./ui/SightView.vue";
 import ScoreProgress from "./ui/ScoreProgress.vue";
+
+/**
+ * 曲库单独拆包：它的模块里内联了全部曲谱原文（`?raw`），是首屏之外最大
+ * 的一块。首页、自评、识谱都不需要曲库，等用户点进「曲库」再请求。
+ */
+const RepertoireView = defineAsyncComponent(() => import("./ui/RepertoireView.vue"));
 
 type Screen =
   | "loading"
@@ -1176,7 +1181,7 @@ function finishTestHand() {
   }
 }
 
-function drawTestStaff() {
+async function drawTestStaff() {
   const el = testStaffEl.value;
   const current = testScore.value;
   if (!el) return;
@@ -1184,6 +1189,9 @@ function drawTestStaff() {
     el.replaceChildren();
     return;
   }
+  const { renderGrandScore, renderScore } = await loadRenderer();
+  // 等待渲染器加载期间可能已经换了谱子/离屏，落笔前再确认一次。
+  if (testStaffEl.value !== el || testScore.value !== current) return;
   if (testGrand.value) {
     renderGrandScore(el, current, true);
     paintTestProgress();

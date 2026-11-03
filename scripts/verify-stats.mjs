@@ -62,9 +62,10 @@ await page.locator('nav.tabs [data-section=me]').click();
 await page.waitForSelector('[data-test=me]', { timeout: 8000 });
 await page.waitForTimeout(600);
 const rows = await page.locator('[data-test=me-practice] .stat').allTextContents();
-const quizRow = rows.find((text) => text.includes('乐理答题'));
-check('我的页有乐理答题行', Boolean(quizRow), quizRow ?? rows.join(' | '));
-check('汇总口径', /共 \d+ 题 · 正确率 \d+%/.test(quizRow ?? ''), quizRow ?? '');
+// 答题数已从「停留时长」那张表里拆出来独立成块（两套口径不并列）
+const quizBlock = await page.locator('[data-test=me-practice-quiz]').textContent();
+check('我的页有乐理答题块', (quizBlock ?? '').includes('乐理答题'), quizBlock ?? rows.join(' | '));
+check('汇总口径', /共 \d+ 题 · 正确率 \d+%/.test(quizBlock ?? ''), quizBlock ?? '');
 await page.screenshot({ path: resolve(SHOTS, 'stats-me.png'), fullPage: true });
 
 check('无页面异常', fatal.length === 0, fatal.join('; '));

@@ -24,7 +24,7 @@ import {
   scrollScoreToCursor,
   scoreProgressRatio,
 } from "../notation/scorePaint";
-import { renderScore } from "../notation/renderScore";
+import { loadRenderer } from "../notation/loadRenderer";
 import KeyboardDiagram from "./KeyboardDiagram.vue";
 import ScoreProgress from "./ScoreProgress.vue";
 
@@ -301,7 +301,7 @@ function sameProgress(current: Profile, next: Profile): boolean {
     && current.weakPitchQueue.every((label, index) => label === next.weakPitchQueue[index]);
 }
 
-function drawStaff() {
+async function drawStaff() {
   const el = staffEl.value;
   if (!el) return;
   const current = score.value;
@@ -309,6 +309,8 @@ function drawStaff() {
     el.replaceChildren();
     return;
   }
+  const { renderScore } = await loadRenderer();
+  if (staffEl.value !== el || score.value !== current) return;
   renderScore(el, current, hand.value, true);
   applyPaint();
 }

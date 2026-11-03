@@ -258,7 +258,29 @@ describe("ScoreFollow", () => {
 
     expect(wrapper.get("[data-test=t-status]").text()).toBe("跟完了");
     expect(wrapper.get("[data-test=t-summary]").text()).toContain("2 / 2");
-    expect(wrapper.emitted("done")?.[0]?.[0]).toEqual({ onCount: 2, total: 2 });
+    expect(wrapper.emitted("done")?.[0]?.[0]).toEqual({
+      onCount: 2,
+      total: 2,
+      missed: 0,
+      weakBar: null,
+    });
+  });
+
+  it("reports the bar with the most misses so the parent can point at the next lesson", async () => {
+    const { wrapper, press, tick } = await setup();
+
+    // 第 0 拍按齐，第 1 拍（二分音符 D4）漏掉；时钟越过段尾收尾。
+    await press(C4, at(0));
+    await press(C3, at(0));
+    tick(at(4));
+    await nextFrames();
+
+    expect(wrapper.emitted("done")?.[0]?.[0]).toMatchObject({
+      onCount: 1,
+      total: 2,
+      missed: 1,
+      weakBar: 1,
+    });
   });
 
   it("moves on when the clock has already passed a position", async () => {

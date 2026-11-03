@@ -52,6 +52,8 @@ await openPractice();
 await page.locator('[data-test=practice-tab-melodies]').click();
 await page.waitForSelector('[data-test=practice-prompt]', { timeout: 8000 });
 check('旋律题干', (await page.locator('[data-test=practice-prompt]').textContent()) === '听旋律，判断调性');
+// 渲染器按需加载：等分包到位再数 svg
+await page.waitForSelector('[data-test=practice-staff] svg', { timeout: 8000 }).catch(() => {});
 check('旋律谱面渲染', (await page.locator('[data-test=practice-staff] svg').count()) >= 1);
 check('旋律试听按钮', (await page.locator('[data-test=practice-play]').count()) === 1);
 check('跟弹组件在场', (await page.locator('[data-test=melody-follow]').count()) === 1);

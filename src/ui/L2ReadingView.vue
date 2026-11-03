@@ -23,7 +23,7 @@ import {
   scrollScoreToCursor,
   scoreProgressRatio,
 } from "../notation/scorePaint";
-import { renderGrandScore, renderScore } from "../notation/renderScore";
+import { loadRenderer } from "../notation/loadRenderer";
 import KeyboardDiagram from "./KeyboardDiagram.vue";
 import ScoreProgress from "./ScoreProgress.vue";
 
@@ -300,7 +300,7 @@ function sameProgress(current: Profile, next: Profile): boolean {
     && current.tapStreak === next.tapStreak;
 }
 
-function drawStaff() {
+async function drawStaff() {
   const el = staffEl.value;
   if (!el) return;
   const current = score.value;
@@ -309,6 +309,9 @@ function drawStaff() {
     el.replaceChildren();
     return;
   }
+  const { renderGrandScore, renderScore } = await loadRenderer();
+  // 等待渲染器加载期间可能已经换了谱子/离屏，落笔前再确认一次。
+  if (staffEl.value !== el || score.value !== current) return;
   if (usesGrand(lessonId)) {
     renderGrandScore(el, current, true);
     applyPaint();
